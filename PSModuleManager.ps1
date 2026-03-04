@@ -2,11 +2,13 @@
 <#
 .SYNOPSIS  PowerShell Module Manager v7.0
 .DESCRIPTION
-    The ONLY reliable way to host WPF in a PS script:
-    1. Create a dedicated STA thread
-    2. Inside that thread: new Application(), then ShowDialog()
-    3. All UI runs on that thread - zero dispatcher issues
-    This is the same pattern used by SAPIEN PowerShell Studio.
+PSModuleManager is a single-file PowerShell script that launches a full WPF GUI for managing, scanning, installing, and maintaining PowerShell modules. 
+It runs on a dedicated STA thread via a PowerShell runspace and communicates between the GUI and background workers using thread-safe concurrent queues.
+
+Author  : Nikolaos Karanikolas
+Version : 7.0
+Engines : Windows PowerShell 5.1  ·  PowerShell 7.x
+Theme   : Dark (switchable to Light)
 
 .NOTES
     Run from any PS version:
