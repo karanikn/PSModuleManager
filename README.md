@@ -81,13 +81,47 @@ Theme   : Dark (switchable to Light)
 
 ## Quick Start
 
-```powershell
-# Run directly (no install needed)
-pwsh.exe -File PSModuleManager.ps1
+### ▶️ Option 1 — Run the compiled EXE (easiest)
 
-# Or from Windows PowerShell
+Simply double-click `PSModuleManager.exe`. No PowerShell or terminal needed.
+
+---
+
+### ▶️ Option 2 — Run the script from Terminal
+
+#### PowerShell 7 (recommended)
+```powershell
+# Navigate to the folder containing the script
+cd "C:\Path\To\PSModuleManager"
+
+# Run it
+pwsh.exe -File PSModuleManager.ps1
+```
+
+#### Windows PowerShell 5.1
+```powershell
+# Navigate to the folder
+cd "C:\Path\To\PSModuleManager"
+
+# Run it
 powershell.exe -File PSModuleManager.ps1
 ```
+
+#### If you get an ExecutionPolicy error
+```powershell
+# Allow the script to run for current user only (one-time)
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+
+# Then run normally
+pwsh.exe -File PSModuleManager.ps1
+```
+
+#### Run directly without changing directory
+```powershell
+pwsh.exe -File "C:\Path\To\PSModuleManager\PSModuleManager.ps1"
+```
+
+> **Tip:** Right-click the `.ps1` file → **Run with PowerShell** also works if your ExecutionPolicy allows it.
 
 > On first run the app auto-detects both PS engines and loads the module catalog.  
 > A compiled `PSModuleManager.exe` is also available — no PowerShell required to launch.
