@@ -21,7 +21,7 @@
 `PSModuleManager.ps1` is a single-file PowerShell script that launches a full WPF GUI for managing, scanning, installing, and maintaining PowerShell modules. It runs on a dedicated STA thread via a PowerShell runspace and communicates between the GUI and background workers using thread-safe concurrent queues.
 
 ```
-Author  : karanik.gr
+Author  : Nikolaos Karanikolas
 Version : 7.0
 Engines : Windows PowerShell 5.1  ·  PowerShell 7.x
 Theme   : Dark (switchable to Light)
@@ -188,4 +188,4 @@ PSModMgr_YYYYMMDD_HHMMSS.log  ← Auto-created in %TEMP% — runtime log
 
 ---
 
-*Developed by [karanik.gr](https://karanik.gr) — PowerShell Module Manager v7.0*
+*Developed by [karanik](https://karanik.gr) — PowerShell Module Manager v7.0*
