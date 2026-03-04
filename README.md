@@ -2,11 +2,18 @@
 
 > **A dark-themed WPF GUI for managing PowerShell modules across Windows PowerShell 5.1 and PowerShell 7 — built entirely in PowerShell.**
 
+[![GitHub release](https://img.shields.io/badge/version-7.0-blue?style=flat-square)](https://github.com/karanikn/PSModuleManager)
+[![PowerShell](https://img.shields.io/badge/PowerShell-5.1%20%7C%207.x-blue?style=flat-square&logo=powershell)](https://github.com/PowerShell/PowerShell)
+[![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey?style=flat-square&logo=windows)](https://www.microsoft.com/windows)
+[![License](https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square)](LICENSE)
+[![AI Assisted](https://img.shields.io/badge/built%20with-Claude%20AI-orange?style=flat-square&logo=anthropic)](https://claude.ai)
+
 ---
 
 ## 📋 Table of Contents
 
 - [Overview](#overview)
+- [Screenshots](#screenshots)
 - [Requirements](#requirements)
 - [Quick Start](#quick-start)
 - [Features](#features)
@@ -18,7 +25,7 @@
 
 ## Overview
 
-`PSModuleManager.ps1` is a single-file PowerShell script that launches a full WPF GUI for managing, scanning, installing, and maintaining PowerShell modules. It runs on a dedicated STA thread via a PowerShell runspace and communicates between the GUI and background workers using thread-safe concurrent queues.
+`PSModuleManager` is a single-file PowerShell script that launches a full WPF GUI for managing, scanning, installing, and maintaining PowerShell modules. It runs on a dedicated STA thread via a PowerShell runspace and communicates between the GUI and background workers using thread-safe concurrent queues.
 
 ```
 Author  : Nikolaos Karanikolas
@@ -26,6 +33,36 @@ Version : 7.0
 Engines : Windows PowerShell 5.1  ·  PowerShell 7.x
 Theme   : Dark (switchable to Light)
 ```
+
+---
+
+## Screenshots
+
+### 🗂️ Module Catalog
+> Scan all modules across both PS engines, see versions, scopes and gallery status at a glance.
+
+![Module Catalog](https://raw.githubusercontent.com/karanikn/PSModuleManager/main/Screenshots/PSModuleManager_ModuleCatalog.png)
+
+---
+
+### 🏭 Repositories
+> Register/unregister repositories with toggle switches, browse and install modules directly from any NuGet-compatible feed.
+
+![Repositories](https://raw.githubusercontent.com/karanikn/PSModuleManager/main/Screenshots/PSModuleManager_Repositories.png)
+
+---
+
+### ⚙️ Engine Info
+> Auto-detect PS5 and PS7 engines, view paths, install PS7 via winget.
+
+![Engine Info](https://raw.githubusercontent.com/karanikn/PSModuleManager/main/Screenshots/PSModuleManager_Engine.png)
+
+---
+
+### 📂 Module Paths
+> View and manage all PSModulePath entries per engine.
+
+![Module Paths](https://raw.githubusercontent.com/karanikn/PSModuleManager/main/Screenshots/PSModuleManager_ModulePaths.png)
 
 ---
 
@@ -52,7 +89,8 @@ pwsh.exe -File PSModuleManager.ps1
 powershell.exe -File PSModuleManager.ps1
 ```
 
-> On first run the app auto-detects both PS engines and loads the module catalog.
+> On first run the app auto-detects both PS engines and loads the module catalog.  
+> A compiled `PSModuleManager.exe` is also available — no PowerShell required to launch.
 
 ---
 
@@ -168,6 +206,9 @@ Main Thread (PS5/PS7)
 
 ```
 PSModuleManager.ps1           ← Main script (single file, ~4600 lines)
+PSModuleManager.exe           ← Compiled executable (no PS required to launch)
+PSModuleManager.ico           ← Application icon
+Build-PSModuleManager-EXE.ps1 ← Build script (compiles .ps1 → .exe via ps2exe)
 PSModuleManager_custom.json   ← Auto-created — persists custom catalog modules
 PSModMgr_YYYYMMDD_HHMMSS.log  ← Auto-created in %TEMP% — runtime log
 ```
@@ -188,4 +229,14 @@ PSModMgr_YYYYMMDD_HHMMSS.log  ← Auto-created in %TEMP% — runtime log
 
 ---
 
-*Developed by [karanik](https://karanik.gr) — PowerShell Module Manager v7.0*
+---
+
+## 🤖 AI Assistance
+
+This project was developed with the assistance of **[Claude](https://claude.ai)** (Anthropic AI).  
+The architecture, WPF GUI, threading model, async patterns, and all PowerShell code were designed and iterated collaboratively between the developer and Claude over an extended session.
+
+---
+
+*Developed by [karanik](https://karanik.gr) — PowerShell Module Manager v7.0*  
+*Built with the assistance of [Claude AI](https://claude.ai) by Anthropic*
