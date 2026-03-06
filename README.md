@@ -5,8 +5,7 @@
 [![GitHub release](https://img.shields.io/badge/version-7.0-blue?style=flat-square)](https://github.com/karanikn/PSModuleManager)
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1%20%7C%207.x-blue?style=flat-square&logo=powershell)](https://github.com/PowerShell/PowerShell)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey?style=flat-square&logo=windows)](https://www.microsoft.com/windows)
-[![License](https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square)](LICENSE)
-[![AI Assisted](https://img.shields.io/badge/built%20with-Claude%20AI-orange?style=flat-square&logo=anthropic)](https://claude.ai)
+[![License](https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square)](LICENSE)[![AI Assisted](https://img.shields.io/badge/built%20with-Claude%20AI-orange?style=flat-square&logo=anthropic)](https://claude.ai)
 
 ---
 
@@ -19,7 +18,7 @@
 - [Features](#features)
 - [Tabs](#tabs)
 - [Architecture Notes](#architecture-notes)
-- [Files](#files)
+
 
 ---
 
@@ -81,13 +80,7 @@ Theme   : Dark (switchable to Light)
 
 ## Quick Start
 
-### ▶️ Option 1 — Run the compiled EXE (easiest)
-
-Simply double-click `PSModuleManager.exe`. No PowerShell or terminal needed.
-
----
-
-### ▶️ Option 2 — Run the script from Terminal
+### ▶️ Run the script from Terminal
 
 #### PowerShell 7 (recommended)
 ```powershell
@@ -116,6 +109,23 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 pwsh.exe -File PSModuleManager.ps1
 ```
 
+#### If the script is blocked after downloading from the internet
+Windows may block `.ps1` files downloaded from the internet (Zone.Identifier stream).  
+You will see an error like: *"cannot be loaded because running scripts is disabled"* or *"File PSModuleManager.ps1 cannot be loaded"*.
+
+```powershell
+# Unblock the file (one-time, run from the folder containing the script)
+Unblock-File -Path .\PSModuleManager.ps1
+
+# Verify it's unblocked (should return nothing)
+Get-Item .\PSModuleManager.ps1 -Stream Zone.Identifier -ErrorAction SilentlyContinue
+
+# Then run normally
+pwsh.exe -File PSModuleManager.ps1
+```
+
+> **Tip:** You can also right-click `PSModuleManager.ps1` → **Properties** → check **Unblock** at the bottom → **OK**.
+
 #### Run directly without changing directory
 ```powershell
 pwsh.exe -File "C:\Path\To\PSModuleManager\PSModuleManager.ps1"
@@ -123,8 +133,8 @@ pwsh.exe -File "C:\Path\To\PSModuleManager\PSModuleManager.ps1"
 
 > **Tip:** Right-click the `.ps1` file → **Run with PowerShell** also works if your ExecutionPolicy allows it.
 
-> On first run the app auto-detects both PS engines and loads the module catalog.  
-> A compiled `PSModuleManager.exe` is also available — no PowerShell required to launch.
+> On first run the app auto-detects both PS engines and loads the module catalog.
+> No installation needed — just run the `.ps1` directly.  
 
 ---
 
@@ -236,18 +246,6 @@ Main Thread (PS5/PS7)
 
 ---
 
-## Files
-
-```
-PSModuleManager.ps1           ← Main script (single file, ~4600 lines)
-PSModuleManager.exe           ← Compiled executable (no PS required to launch)
-PSModuleManager.ico           ← Application icon
-Build-PSModuleManager-EXE.ps1 ← Build script (compiles .ps1 → .exe via ps2exe)
-PSModuleManager_custom.json   ← Auto-created — persists custom catalog modules
-PSModMgr_YYYYMMDD_HHMMSS.log  ← Auto-created in %TEMP% — runtime log
-```
-
----
 
 ## Keyboard & UI Tips
 
