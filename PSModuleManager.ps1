@@ -2,13 +2,11 @@
 <#
 .SYNOPSIS  PowerShell Module Manager v7.0
 .DESCRIPTION
-PSModuleManager is a single-file PowerShell script that launches a full WPF GUI for managing, scanning, installing, and maintaining PowerShell modules. 
-It runs on a dedicated STA thread via a PowerShell runspace and communicates between the GUI and background workers using thread-safe concurrent queues.
-
-Author  : Nikolaos Karanikolas
-Version : 7.0
-Engines : Windows PowerShell 5.1  ·  PowerShell 7.x
-Theme   : Dark (switchable to Light)
+    The ONLY reliable way to host WPF in a PS script:
+    1. Create a dedicated STA thread
+    2. Inside that thread: new Application(), then ShowDialog()
+    3. All UI runs on that thread - zero dispatcher issues
+    This is the same pattern used by SAPIEN PowerShell Studio.
 
 .NOTES
     Run from any PS version:
@@ -32,14 +30,18 @@ function Write-Log {
     $e = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')][$Lvl] $Msg"
     $Global:LogQ.Enqueue($e)
     try { Add-Content -Path $Global:LogFile -Value $e -Encoding UTF8 } catch {}
-    $c = switch ($Lvl) {
-        'ERROR'   { 'Red'    }
-        'WARN'    { 'Yellow' }
-        'SUCCESS' { 'Green'  }
-        'DEBUG'   { 'Gray'   }
-        default   { 'Cyan'   }
+    # Only write to console when running as .ps1 (not compiled EXE with -noConsole)
+    # ps2exe sets $IsEXE = $true and stdout is redirected to MessageBox otherwise
+    if (-not $Global:IsCompiledEXE) {
+        $c = switch ($Lvl) {
+            'ERROR'   { 'Red'    }
+            'WARN'    { 'Yellow' }
+            'SUCCESS' { 'Green'  }
+            'DEBUG'   { 'Gray'   }
+            default   { 'Cyan'   }
+        }
+        Write-Host $e -ForegroundColor $c
     }
-    Write-Host $e -ForegroundColor $c
 }
 
 # ============================================================
@@ -3105,78 +3107,33 @@ $rows</table></body></html>
         $pnlCustomMods.Children.Clear()
         $lblRepoStatus.Text = "Loading repositories..."
 
-        $eng = Get-RepoEngine
-        if (-not $eng) {
-            $lblRepoStatus.Text = "No engine available."
-            $script:RepoTabBusy = $false; return
-        }
-
-        $rs = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace()
-        $rs.ApartmentState = 'MTA'; $rs.ThreadOptions = 'ReuseThread'; $rs.Open()
-        $ps = [System.Management.Automation.PowerShell]::Create()
-        $ps.Runspace = $rs
-        $q  = [System.Collections.Concurrent.ConcurrentQueue[string]]::new()
-        $sb2 = {
-            param($exe, $q)
-            $cmd = (
-                '$ep="SilentlyContinue";$ErrorActionPreference=$ep;$ProgressPreference=$ep;' +
-                'if(-not(Get-Command Get-PSRepository -EA $ep)){$q2="NOMOD";Write-Output $q2;return};' +
-                'try{$repos=Get-PSRepository -EA $ep 2>$null}catch{$repos=@()};' +
-                'if(-not $repos){Write-Output "NONE";return};' +
-                'foreach($r in $repos){' +
-                '  Write-Output ("REPO^"+$r.Name+"^"+$r.SourceLocation+"^"+$r.InstallationPolicy+"^"+$r.PackageManagementProvider)' +
-                '}'
-            )
-            try {
-                $out = & $exe -NoProfile -NonInteractive -Command $cmd 2>$null
-                foreach ($ln in $out) { $q.Enqueue($ln.ToString().Trim()) }
-            } catch { $q.Enqueue("ERR^$_") }
-            $q.Enqueue("DONE")
-        }
-        [void]$ps.AddScript($sb2)
-        [void]$ps.AddParameters(@{ exe = $eng.Exe; q = $q })
-        $ar = $ps.BeginInvoke()
-        $script:LiveRepos = @()
-
-        $t = [System.Windows.Threading.DispatcherTimer]::new()
-        $t.Interval = [System.TimeSpan]::FromMilliseconds(300)
-        $t.add_Tick({
-            $raw = $null
-            while ($q.TryDequeue([ref]$raw)) {
-                if ($raw -eq 'DONE') {
-                    $t.Stop()
-                    try { $ps.EndInvoke($ar) | Out-Null; $ps.Dispose(); $rs.Close(); $rs.Dispose() } catch {}
-                    $script:RepoRegState   = @{}
-                    $script:RepoTrustState = @{}
-                    foreach ($r in $script:LiveRepos) {
-                        $script:RepoRegState[$r.Name]   = $true
-                        $script:RepoTrustState[$r.Name] = $r.Policy
+        # Query Get-PSRepository synchronously on the GUI thread - fast (<200ms), no runspace needed
+        $script:LiveRepos     = @()
+        $script:RepoRegState  = @{}
+        $script:RepoTrustState = @{}
+        try {
+            $ep = 'SilentlyContinue'
+            $repos = $null
+            try { $repos = Get-PSRepository -EA $ep 2>$null } catch {}
+            if ($repos) {
+                foreach ($r in $repos) {
+                    $prov = if ($r.PackageManagementProvider) { $r.PackageManagementProvider } else { '' }
+                    $obj  = [PSCustomObject]@{
+                        Name         = $r.Name
+                        Url          = $r.SourceLocation
+                        Policy       = $r.InstallationPolicy
+                        Provider     = $prov
+                        IsRegistered = $true
                     }
-                    $script:RepoTabBusy = $false
-                    BuildRepoUI
-                    return
-                } elseif ($raw -match '^REPO\^') {
-                    $p = $raw.Substring(5).Split('^')
-                    if ($p.Count -ge 3) {
-                        $provVal = if ($p.Count -ge 4) { $p[3].Trim() } else { '' }
-                        $script:LiveRepos += [PSCustomObject]@{
-                            Name=$p[0].Trim(); Url=$p[1].Trim()
-                            Policy=$p[2].Trim(); Provider=$provVal
-                            IsRegistered=$true
-                        }
-                    }
-                } elseif ($raw -eq 'NONE' -or $raw -eq 'NOMOD') {
-                    # handled at DONE
-                } elseif ($raw -match '^ERR') {
-                    $t.Stop()
-                    try { $ps.EndInvoke($ar) | Out-Null; $ps.Dispose(); $rs.Close(); $rs.Dispose() } catch {}
-                    $script:RepoTabBusy = $false
-                    BuildRepoUI
-                    return
+                    $script:LiveRepos      += $obj
+                    $script:RepoRegState[$r.Name]   = $true
+                    $script:RepoTrustState[$r.Name] = $r.InstallationPolicy
                 }
             }
-        }.GetNewClosure())
-        $t.Start()
+        } catch {}
+
+        $script:RepoTabBusy = $false
+        BuildRepoUI
     }
 
     function BuildRepoUI {
@@ -4591,4 +4548,6 @@ try {
 
 Write-Log 'GUI closed.' 'INFO'
 $e = $null
-while ($Global:LogQ.TryDequeue([ref]$e)) { Write-Host $e }
+while ($Global:LogQ.TryDequeue([ref]$e)) {
+    if (-not $Global:IsCompiledEXE) { Write-Host $e }
+}
