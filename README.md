@@ -261,6 +261,20 @@ Main Thread (PS5/PS7)
 
 ---
 
+> ### ⚠️ Important — Please be patient
+>
+> **Refresh Status** scans all 65 catalog modules across both PS5 and PS7 engines,
+> queries PSGallery for latest versions, and processes all results.
+> This can take **30–90 seconds** depending on your internet connection and system speed.
+> Watch the **Terminal Output** panel at the bottom-right for live progress.
+> Do **not** click Refresh Status again while a scan is already running.
+>
+> **Browse Repo Modules** queries all registered repositories (PSGallery has 500+ results)
+> and may take **15–30 seconds** to populate the list.
+> Wait for the status bar to show *"Found N modules in registered repositories"* before interacting.
+
+---
+
 ---
 
 ## 🤖 AI Assistance
@@ -272,3 +286,37 @@ The architecture, WPF GUI, threading model, async patterns, and all PowerShell c
 
 *Developed by [karanik](https://karanik.gr) — PowerShell Module Manager v7.0*  
 *Built with the assistance of [Claude AI](https://claude.ai) by Anthropic*
+
+---
+
+## 📝 Changelog
+
+### v7.0 — Current
+
+#### 🐛 Bug Fixes
+
+| # | Area | Issue | Fix |
+|---|---|---|---|
+| 1 | Repositories | Toggle switches always showed OFF even when repos were registered | Replaced entire async runspace approach with a direct synchronous `Get-PSRepository` call on the GUI thread — the STA session already has `PowerShellGet` loaded, so no child process or encoding tricks needed |
+| 3 | Repositories | `Browse Repo Modules` sometimes returned no results | Increased module fetch limit from 300 → 500 |
+| 4 | Repositories | `Search Gallery` showed results as MessageBox only | Results now appear as checkboxes in the right panel — tick + Install Selected → scope dialog |
+| 5 | Repositories | `Register Repo` dialog threw `Cannot call method on null` | Stored main window reference in `$script:MainWindow` immediately after creation; all dialogs use it with null guard |
+| 6 | Repositories | `SelectionChanged` event fired on inner DataGrid row clicks | Added `OriginalSource` type check + `$script:LastSelectedTab` dedup guard |
+| 7 | Repositories | `Install Selected` saw 0 checked modules | Fixed stale checkbox reference — now reads checkboxes directly from panel at install time |
+| 8 | Repositories | `Clear` button triggered Unregister chain | Clear now rebuilds the custom panel directly without calling `BuildRepoUI` |
+| 9 | Install | Parse error `[ERR] $_: $(...)` in install output | Replaced `$_` inline with `$mn`/`$em` temp variables to avoid `:` scope operator misparse |
+| 10 | Startup (EXE) | Startup log messages appeared as MessageBox popups when compiled with ps2exe | Added `$Global:IsCompiledEXE` detection via `$IsEXE` ps2exe variable; `Write-Log` suppresses `Write-Host` when running as EXE |
+| 11 | All timers | `DispatcherTimer` tick handlers could not access outer scope variables | Added `.GetNewClosure()` to ALL timer tick handlers |
+| 12 | General | Non-ASCII characters caused encoding issues | All non-ASCII chars replaced with `&#NNN;` HTML entities throughout |
+
+#### ✨ New Features
+
+| Feature | Description |
+|---|---|
+| **Install from Repo scope dialog** | After selecting modules, prompted to choose `AllUsers` (Admin) or `CurrentUser` |
+| **Auto-add to Module Catalog** | Newly installed repo modules automatically added to catalog + persisted to `PSModuleManager_custom.json` |
+| **Search Gallery in-panel** | Async search results shown as checkboxes in right panel (same UX as Browse) |
+| **Set Log Path** | Button in Log Viewer toolbar to relocate the log file to a custom folder |
+| **Window close cleanup** | All timers stopped and runspaces disposed cleanly on window close |
+
+---
