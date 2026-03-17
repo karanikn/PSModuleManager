@@ -1,322 +1,222 @@
-# <img src="https://raw.githubusercontent.com/PowerShell/PowerShell/master/assets/ps_black_64.svg" width="28" align="center"/> PowerShell Module Manager `v7.0`
+# KeePass Network Checker
 
-> **A dark-themed WPF GUI for managing PowerShell modules across Windows PowerShell 5.1 and PowerShell 7 — built entirely in PowerShell.**
+A [KeePass 2.x](https://keepass.info/) plugin that performs real-time network diagnostics — ping, TCP port check, and HTTP status — directly from your password entries.
 
-[![GitHub release](https://img.shields.io/badge/version-7.0-blue?style=flat-square)](https://github.com/karanikn/PSModuleManager)
-[![PowerShell](https://img.shields.io/badge/PowerShell-5.1%20%7C%207.x-blue?style=flat-square&logo=powershell)](https://github.com/PowerShell/PowerShell)
-[![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey?style=flat-square&logo=windows)](https://www.microsoft.com/windows)
-[![License](https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square)](LICENSE)[![AI Assisted](https://img.shields.io/badge/built%20with-Claude%20AI-orange?style=flat-square&logo=anthropic)](https://claude.ai)
-
----
-
-## 📋 Table of Contents
-
-- [Overview](#overview)
-- [Screenshots](#screenshots)
-- [Requirements](#requirements)
-- [Quick Start](#quick-start)
-- [Features](#features)
-- [Tabs](#tabs)
-- [Architecture Notes](#architecture-notes)
-
-
----
-
-## Overview
-
-`PSModuleManager` is a single-file PowerShell script that launches a full WPF GUI for managing, scanning, installing, and maintaining PowerShell modules. It runs on a dedicated STA thread via a PowerShell runspace and communicates between the GUI and background workers using thread-safe concurrent queues.
-
-```
-Author  : Nikolaos Karanikolas
-Version : 7.0
-Engines : Windows PowerShell 5.1  ·  PowerShell 7.x
-Theme   : Dark (switchable to Light)
-```
-
----
-
-## Screenshots
-
-### 🗂️ Module Catalog
-> Scan all modules across both PS engines, see versions, scopes and gallery status at a glance.
-
-![Module Catalog](https://raw.githubusercontent.com/karanikn/PSModuleManager/main/Screenshots/PSModuleManager_ModuleCatalog.png)
-
----
-
-### 🏭 Repositories
-> Register/unregister repositories with toggle switches, browse and install modules directly from any NuGet-compatible feed.
-
-![Repositories](https://raw.githubusercontent.com/karanikn/PSModuleManager/main/Screenshots/PSModuleManager_Repositories.png)
-
----
-
-### ⚙️ Engine Info
-> Auto-detect PS5 and PS7 engines, view paths, install PS7 via winget.
-
-![Engine Info](https://raw.githubusercontent.com/karanikn/PSModuleManager/main/Screenshots/PSModuleManager_Engine.png)
-
----
-
-### 📂 Module Paths
-> View and manage all PSModulePath entries per engine.
-
-![Module Paths](https://raw.githubusercontent.com/karanikn/PSModuleManager/main/Screenshots/PSModuleManager_ModulePaths.png)
-
----
-
-## Requirements
-
-| Requirement | Detail |
-|---|---|
-| **OS** | Windows 10 / 11 |
-| **PowerShell** | Windows PowerShell 5.1 (built-in) |
-| **PS7 (optional)** | PowerShell 7.x — `pwsh.exe` in `$PATH` or default install path |
-| **WPF** | .NET Framework 4.x (included with Windows) |
-| **Admin** | Optional — required for `AllUsers` scope installs |
-| **Internet** | Required for Gallery checks and module installs |
-
----
-
-## Quick Start
-
-### ▶️ Run the script from Terminal
-
-#### PowerShell 7 (recommended)
-```powershell
-# Navigate to the folder containing the script
-cd "C:\Path\To\PSModuleManager"
-
-# Run it
-pwsh.exe -File PSModuleManager.ps1
-```
-
-#### Windows PowerShell 5.1
-```powershell
-# Navigate to the folder
-cd "C:\Path\To\PSModuleManager"
-
-# Run it
-powershell.exe -File PSModuleManager.ps1
-```
-
-#### If you get an ExecutionPolicy error
-```powershell
-# Allow the script to run for current user only (one-time)
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-
-# Then run normally
-pwsh.exe -File PSModuleManager.ps1
-```
-
-#### If the script is blocked after downloading from the internet
-Windows may block `.ps1` files downloaded from the internet (Zone.Identifier stream).  
-You will see an error like: *"cannot be loaded because running scripts is disabled"* or *"File PSModuleManager.ps1 cannot be loaded"*.
-
-```powershell
-# Unblock the file (one-time, run from the folder containing the script)
-Unblock-File -Path .\PSModuleManager.ps1
-
-# Verify it's unblocked (should return nothing)
-Get-Item .\PSModuleManager.ps1 -Stream Zone.Identifier -ErrorAction SilentlyContinue
-
-# Then run normally
-pwsh.exe -File PSModuleManager.ps1
-```
-
-> **Tip:** You can also right-click `PSModuleManager.ps1` → **Properties** → check **Unblock** at the bottom → **OK**.
-
-#### Run directly without changing directory
-```powershell
-pwsh.exe -File "C:\Path\To\PSModuleManager\PSModuleManager.ps1"
-```
-
-> **Tip:** Right-click the `.ps1` file → **Run with PowerShell** also works if your ExecutionPolicy allows it.
-
-> On first run the app auto-detects both PS engines and loads the module catalog.
-> No installation needed — just run the `.ps1` directly.  
+![KeePass Network Checker](https://img.shields.io/badge/KeePass-Plugin-blue) ![Version](https://img.shields.io/badge/version-1.2.0-green) ![.NET](https://img.shields.io/badge/.NET%20Framework-4.8-purple) ![License](https://img.shields.io/badge/license-GPL--3.0-orange) ![Built with Claude AI](https://img.shields.io/badge/built%20with-Claude%20AI-blueviolet?logo=anthropic)
 
 ---
 
 ## Features
 
-### 🔍 Module Catalog — Scan & Status
-- Scans **65 predefined modules** across both PS engines in a single batch call per engine
-- Color-coded status columns: `PS5 Ver`, `PS5 Scope`, `PS7 Ver`, `PS7 Scope`, `Gallery`, `Status`
-- Status values: `Up to Date` · `Update Available` · `Not Installed` · `Pending`
-- Scope color coding: `CurrentUser` (green) · `AllUsers` (blue) · `System` (grey) · `WinPS-System` · `PS7-System`
-- Category chip tabs: **All · ActiveDir · Azure · Database · Graph · Security · System · Terminal · Utilities · VMware**
-- Filter by text, installed-only, or updates-only
-- Select All / Clear / Select Updatable / Select Missing
-
-### 📦 Install / Update
-- **Install / Update Selected** — installs or updates checked modules via selected engine
-- **Update ALL Installed** — batch-updates every installed catalog module
-- **Remove Selected** — uninstalls selected modules
-- Scope selection: `AllUsers` (requires Admin) or `CurrentUser`
-- Real-time progress in **Terminal Output** panel
-
-### 🏭 Repository Management (`Repositories` tab)
-| Feature | Detail |
-|---|---|
-| Toggle switches | Register / unregister repos with an ON/OFF pill switch |
-| Known repos | PSGallery · NuGet · Chocolatey — with OFFICIAL badge |
-| Trust badge | TRUSTED / UNTRUSTED badge per registered repo |
-| Register custom repo | Dialog for Name + Source URL + Policy (NuGet v2/v3 feeds, Nexus, Artifactory, ProGet) |
-| Unregister | Click card to select, then Unregister Selected |
-| Auto-refresh | Tab refreshes automatically when selected |
-| Browse Repo Modules | Lists up to 500 modules from all registered repos in the right panel with checkboxes |
-| Search Gallery | Async keyword search — results shown as checkboxes in right panel |
-| Install from results | Tick modules → Install Selected → choose AllUsers / CurrentUser |
-| Auto-add to catalog | Newly installed repo modules are automatically added to Module Catalog |
-
-### 🛠️ Utilities
-| Button | Function |
-|---|---|
-| `Set PSModulePath` | Add/remove paths from `$env:PSModulePath` permanently |
-| `Move Module` | Relocate a module between CurrentUser and AllUsers |
-| `Open Module Folder` | Opens the module's install folder in Explorer |
-| `Disable Module` | Renames `.psd1` → `.psd1.disabled` to deactivate without uninstalling |
-| `Enable Module` | Restores `.psd1.disabled` → `.psd1` |
-| `Export Module List` | Exports full status to `.txt` or `.html` report |
-| `Clean ALL Modules` | Removes all PSGet-installed modules (with confirmation) |
-| `Clean Old Versions` | Detects and removes duplicate old versions, keeping the latest |
-
-### ℹ️ Engine Info tab
-- Detects PS5 and PS7 engine paths, versions, PSModulePath entries
-- Installs PS7 via winget if not found
-
-### 📂 Module Paths tab
-- Lists all PSModulePath entries per engine
-- Highlights missing or duplicate paths
-
-### 📄 Log Viewer tab
-- Live log display with reload, clear, open-in-Notepad
-- **Set Log Path** — choose custom folder for log file
-- Timestamped entries: `[INFO]` `[SUCCESS]` `[WARN]` `[ERROR]`
+- **Ping check** — ICMP round-trip time in milliseconds
+- **Port check** — TCP connect to the entry's URL port (auto-detected: 443 for HTTPS, 22 for SSH, 80 for HTTP, or custom)
+- **HTTP status** — GET request with SSL certificate validation bypass (useful for self-signed certs on routers, NAS devices, etc.)
+- **Net Status column** — inline UP/DOWN indicator directly in the KeePass entry list
+- **Entry check** — right-click any entry → Network Check
+- **Group check** — right-click any group → Network Check All Group Entries (checks all entries in that group only)
+- **Popup window** — detailed results table with Device, URL, Ping, Port, HTTP and Status columns
+- **Configurable** — option to show or hide the popup window via Tools → Network Checker Options
 
 ---
 
-## Tabs
+## Screenshots
 
-```
-┌─────────────────┬────────────┬─────────────┬──────────────┬──────────────┐
-│  Module Catalog │ Log Viewer │ Engine Info │ Module Paths │ Repositories │
-└─────────────────┴────────────┴─────────────┴──────────────┴──────────────┘
-```
+### Network Checker popup
+![Network Checker popup](https://raw.githubusercontent.com/karanikn/KeePassNetworkChecker/main/Screenshots/network_checker1.png)
 
-| Tab | Purpose |
-|---|---|
-| **Module Catalog** | Main scan view — status, install, update, remove |
-| **Log Viewer** | Timestamped log with Set Log Path |
-| **Engine Info** | PS5/PS7 detection, PS7 install via winget |
-| **Module Paths** | PSModulePath editor |
-| **Repositories** | Repo registration, Browse/Search, Install from repo |
+The popup shows detailed results per entry with color-coded status indicators.
+
+| Column | Description |
+|--------|-------------|
+| Device | Entry title |
+| URL    | Entry URL field |
+| Ping   | ICMP round-trip time (ms) or TIMEOUT |
+| Port   | TCP port connect result and latency |
+| HTTP   | HTTP response code (200, 403, etc.) or ERR |
+| Status | UP / DOWN composite result |
+
+### Results with UP/DOWN status
+![Network Checker results](https://raw.githubusercontent.com/karanikn/KeePassNetworkChecker/main/Screenshots/network_checker2.png)
+
+### Group context menu
+![Group context menu](https://raw.githubusercontent.com/karanikn/KeePassNetworkChecker/main/Screenshots/network_checker_group-menu.png)
+
+Right-click any group → **Network Check All Group Entries** to check all entries in that group at once.
+
+### Options dialog
+![Options dialog](https://raw.githubusercontent.com/karanikn/KeePassNetworkChecker/main/Screenshots/network_options.png)
+
+### Net Status column
+After running a check, the `Net Status` column in the KeePass entry list is updated with UP or DOWN for each checked entry. To enable it: **View → Configure Columns → enable "Net Status"**.
 
 ---
 
-## Architecture Notes
+## Requirements
 
-| Component | Implementation |
-|---|---|
-| **GUI Thread** | Dedicated STA runspace (`PowerShell.Create()` + `RunspaceFactory`) |
-| **Scan Worker** | MTA runspace — single batch `Get-InstalledModule` + `Get-Module -ListAvailable` call per engine |
-| **Repo Workers** | MTA runspace per operation — PS7 engine preferred for `Get-PSRepository` / `Register-PSRepository` |
-| **Timer Polling** | `DispatcherTimer` polls `ConcurrentQueue<string>` between worker and UI thread |
-| **Closures** | All timer tick handlers use `.GetNewClosure()` to capture outer scope variables |
-| **Persistence** | Custom modules saved to `PSModuleManager_custom.json` next to the script |
-| **Theming** | `BrushConverter` + `ApplyTheme` function — Dark / Light |
+| Requirement | Version |
+|-------------|---------|
+| KeePass | 2.x (tested on 2.61) |
+| .NET Framework | 4.8 |
+| Windows | 10 / 11 |
 
-### Threading Model
+---
 
-```
-Main Thread (PS5/PS7)
-    │
-    └── GUI Runspace (STA Thread)
-            │
-            ├── ConcurrentQueue<string>  ← Scan results
-            ├── ConcurrentQueue<string>  ← Terminal output
-            ├── ConcurrentQueue<object>  ← Batch results
-            │
-            ├── Scan Runspace (MTA)      → Get-InstalledModule / Get-Module
-            ├── Repo Runspace (MTA)      → Get/Register/Unregister-PSRepository
-            ├── Install Runspace (MTA)   → Install-Module
-            └── Browse Runspace (MTA)    → Find-Module
+## Installation
+
+### Option A — Install pre-built DLL
+
+1. Download `KeePassNetworkChecker.dll` from the [Releases](../../releases) page
+2. Copy it to your KeePass `Plugins\` folder  
+   *(e.g. `C:\Program Files\KeePass Password Safe 2\Plugins\`)*
+3. Restart KeePass
+4. Approve the plugin in the KeePass security dialog
+
+### Option B — Build from source
+
+**Prerequisites:**
+- Visual Studio 2019/2022 **or** [Build Tools for Visual Studio](https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022) (select `.NET desktop build tools` during install)
+- .NET Framework 4.8 (included with Windows 10/11)
+
+```powershell
+# Clone the repository
+git clone https://github.com/your-username/KeePassNetworkChecker.git
+cd KeePassNetworkChecker
+
+# Set the path to your KeePass.exe (required — used as build reference and install target)
+$env:KEEPASS_PATH = "C:\Path\To\KeePass\KeePass.exe"
+
+# Build and install
+.\build.ps1
 ```
 
----
-
-
-## Keyboard & UI Tips
-
-| Action | How |
-|---|---|
-| Filter modules | Type in the **Filter** box (instant) |
-| Select all visible | **Select All** button |
-| Multi-select rows | Click checkbox column |
-| Resize panels | Drag the **GridSplitter** dividers |
-| Change engine | **Engine** dropdown — affects Install/Remove scope |
-| Change theme | **Theme** dropdown (top-right) |
-| View full log | **Log Viewer** tab → Open in Notepad |
+> **Tip:** Add `$env:KEEPASS_PATH` to your PowerShell profile (`$PROFILE`) so you don't have to set it every time.
 
 ---
 
-> ### ⚠️ Important — Please be patient
->
-> **Refresh Status** scans all 65 catalog modules across both PS5 and PS7 engines,
-> queries PSGallery for latest versions, and processes all results.
-> This can take **30–90 seconds** depending on your internet connection and system speed.
-> Watch the **Terminal Output** panel at the bottom-right for live progress.
-> Do **not** click Refresh Status again while a scan is already running.
->
-> **Browse Repo Modules** queries all registered repositories (PSGallery has 500+ results)
-> and may take **15–30 seconds** to populate the list.
-> Wait for the status bar to show *"Found N modules in registered repositories"* before interacting.
+## build.ps1 — Build & Install Script
+
+The `build.ps1` script automates the entire build and deployment process. It requires no arguments if `$env:KEEPASS_PATH` is already set.
+
+### What it does — step by step
+
+| Step | Action |
+|------|--------|
+| 1 | Locates `KeePass.exe` from `$env:KEEPASS_PATH` or common install paths |
+| 2 | Finds `MSBuild.exe` automatically via `vswhere.exe` (Visual Studio locator) |
+| 3 | Cleans `bin\` and `obj\` folders from any previous build |
+| 4 | Compiles the project with `MSBuild` in `Release` configuration |
+| 5 | Removes any leftover `.plgx` file from the Plugins folder (prevents compile errors) |
+| 6 | Copies the compiled `KeePassNetworkChecker.dll` to the KeePass `Plugins\` folder |
+| 7 | Clears the KeePass plugin cache (`%LOCALAPPDATA%\KeePass\PluginCache\*`) |
+
+### Usage
+
+```powershell
+# Standard build — uses $env:KEEPASS_PATH
+.\build.ps1
+
+# Override KeePass path inline
+.\build.ps1 -KeePassPath "C:\Tools\KeePass\KeePass.exe"
+```
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `-KeePassPath` | string | `$env:KEEPASS_PATH` | Full path to `KeePass.exe` |
+| `-Configuration` | string | `Release` | MSBuild configuration (`Release` or `Debug`) |
+
+### Example output
+
+```
+KeePass  : C:\Tools\KeePass\KeePass.exe
+MSBuild  : C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe
+Building...
+  KeePassNetworkChecker → bin\Release\KeePassNetworkChecker.dll
+DLL      -> C:\...\bin\Release\KeePassNetworkChecker.dll
+Installed -> C:\Tools\KeePass\Plugins\
+Clearing plugin cache...
+
+Done. Restart KeePass.
+```
+
+### After running the script
+
+1. **Restart KeePass**
+2. On first load, KeePass will show a **security approval dialog** — click **Yes** to allow the plugin
+3. The plugin will appear in **Tools → Plugins** as *KeePass Network Checker*
+
+## Usage
+
+### Check a single entry
+1. Select one or more entries in KeePass
+2. Right-click → **Network Check (Ping / Port / HTTP)**
+3. The popup opens and runs all checks automatically
+
+### Check all entries in a group
+1. Right-click on any group in the left panel
+2. Select **Network Check All Group Entries**
+3. The popup opens with results for all entries in that group
+
+### Net Status column
+After any check completes, the `Net Status` column is automatically updated for the checked entries. Enable it via **View → Configure Columns → Net Status**.
+
+### Options
+Go to **Tools → Network Checker Options** to toggle the popup window on/off.
 
 ---
 
----
+## How it works
 
-## 🤖 AI Assistance
+For each entry, the plugin performs three independent checks:
 
-This project was developed with the assistance of **[Claude](https://claude.ai)** (Anthropic AI).  
-The architecture, WPF GUI, threading model, async patterns, and all PowerShell code were designed and iterated collaboratively between the developer and Claude over an extended session.
+```
+Entry URL: https://192.168.1.1
+         │
+         ├── Ping (ICMP)       → 12 ms ✓
+         ├── Port check (443)  → 443 OK (18ms) ✓
+         └── HTTP GET          → 200 ✓
+                                  └─ Status: UP
+```
 
----
+- **Ping** uses ICMP with a 3-second timeout
+- **Port** performs a TCP connect with a 3-second timeout
+- **HTTP** performs a GET request with TLS 1.1/1.2 support and self-signed cert acceptance
+- **Status** is UP if at least one of the three checks succeeds
 
-*Developed by [karanik](https://karanik.gr) — PowerShell Module Manager v7.0*  
-*Built with the assistance of [Claude AI](https://claude.ai) by Anthropic*
-
----
-
-## 📝 Changelog
-
-### v7.0 — Current
-
-#### 🐛 Bug Fixes
-
-| # | Area | Issue | Fix |
-|---|---|---|---|
-| 1 | Repositories | Toggle switches always showed OFF even when repos were registered | Replaced entire async runspace approach with a direct synchronous `Get-PSRepository` call on the GUI thread — the STA session already has `PowerShellGet` loaded, so no child process or encoding tricks needed |
-| 3 | Repositories | `Browse Repo Modules` sometimes returned no results | Increased module fetch limit from 300 → 500 |
-| 4 | Repositories | `Search Gallery` showed results as MessageBox only | Results now appear as checkboxes in the right panel — tick + Install Selected → scope dialog |
-| 5 | Repositories | `Register Repo` dialog threw `Cannot call method on null` | Stored main window reference in `$script:MainWindow` immediately after creation; all dialogs use it with null guard |
-| 6 | Repositories | `SelectionChanged` event fired on inner DataGrid row clicks | Added `OriginalSource` type check + `$script:LastSelectedTab` dedup guard |
-| 7 | Repositories | `Install Selected` saw 0 checked modules | Fixed stale checkbox reference — now reads checkboxes directly from panel at install time |
-| 8 | Repositories | `Clear` button triggered Unregister chain | Clear now rebuilds the custom panel directly without calling `BuildRepoUI` |
-| 9 | Install | Parse error `[ERR] $_: $(...)` in install output | Replaced `$_` inline with `$mn`/`$em` temp variables to avoid `:` scope operator misparse |
-| 10 | Startup (EXE) | Startup log messages appeared as MessageBox popups when compiled with ps2exe | Added `$Global:IsCompiledEXE` detection via `$IsEXE` ps2exe variable; `Write-Log` suppresses `Write-Host` when running as EXE |
-| 11 | All timers | `DispatcherTimer` tick handlers could not access outer scope variables | Added `.GetNewClosure()` to ALL timer tick handlers |
-| 12 | General | Non-ASCII characters caused encoding issues | All non-ASCII chars replaced with `&#NNN;` HTML entities throughout |
-
-#### ✨ New Features
-
-| Feature | Description |
-|---|---|
-| **Install from Repo scope dialog** | After selecting modules, prompted to choose `AllUsers` (Admin) or `CurrentUser` |
-| **Auto-add to Module Catalog** | Newly installed repo modules automatically added to catalog + persisted to `PSModuleManager_custom.json` |
-| **Search Gallery in-panel** | Async search results shown as checkboxes in right panel (same UX as Browse) |
-| **Set Log Path** | Button in Log Viewer toolbar to relocate the log file to a custom folder |
-| **Window close cleanup** | All timers stopped and runspaces disposed cleanly on window close |
+Checks run in a `BackgroundWorker` so the KeePass UI remains fully responsive.
 
 ---
+
+## Project structure
+
+```
+KeePassNetworkChecker/
+├── KeePassNetworkChecker.cs        # Plugin entry point, menu registration
+├── NetworkCheckerForm.cs           # Popup results window
+├── NetworkStatusColumnProvider.cs  # Net Status column for KeePass entry list
+├── SettingsForm.cs                 # Options dialog
+├── Properties/
+│   └── AssemblyInfo.cs             # Version and product metadata
+├── KeePassNetworkChecker.csproj    # MSBuild project file
+├── build.ps1                       # Build & install script
+└── README.md                       # This file
+```
+
+---
+
+## License
+
+This project is licensed under the **GNU General Public License v3.0** — see the [LICENSE](LICENSE) file for details.
+
+---
+
+## Author
+
+**Nikolaos Karanikolas**
+
+---
+
+## Acknowledgements
+
+This plugin was developed with the assistance of **[Claude AI](https://www.anthropic.com/claude)** by [Anthropic](https://www.anthropic.com). The iterative development process — from initial concept through build system troubleshooting, KeePass plugin API research, UI refinement, and bug fixing — was carried out in collaboration with Claude, which helped navigate the KeePass plugin framework, resolve .NET Framework compatibility issues, and refine the feature set based on real-world feedback.
