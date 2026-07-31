@@ -199,7 +199,9 @@ function Invoke-ModInstall {
     Write-Log "Install [$Name] via $Exe scope=$Scope" 'INFO'
     $sc = (
         '$ep="Stop";$n="' + $Name + '";$s="' + $Scope + '";' +
-        '$ErrorActionPreference=$ep;$ProgressPreference="SilentlyContinue";' +
+        '$ErrorActionPreference="SilentlyContinue";$ProgressPreference="SilentlyContinue";' +
+        '$ep_n="SilentlyContinue";if(-not(Get-PackageProvider -Name NuGet -EA $ep_n -ListAvailable|Where-Object{$_.Version -ge [Version]"2.8.5.201"})){Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser -Confirm:$false -EA Stop};Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -EA $ep_n;' +
+        '$ErrorActionPreference=$ep;' +
         'try{' +
         '  $i=Get-InstalledModule -Name $n -EA SilentlyContinue;' +
         '  if($i){' +
@@ -209,7 +211,7 @@ function Invoke-ModInstall {
         '      Write-Output ("UPDATED|"+$g.Version)' +
         '    }else{Write-Output ("UPTODATE|"+$i.Version)}' +
         '  }else{' +
-        '    Install-Module -Name $n -Scope $s -Force -AllowClobber -SkipPublisherCheck;' +
+        '    if($PSVersionTable.PSVersion.Major -ge 7){Install-Module -Name $n -Scope $s -Force -AllowClobber -SkipPublisherCheck -Repository PSGallery -AcceptLicense}else{Install-Module -Name $n -Scope $s -Force -AllowClobber -SkipPublisherCheck};' +
         '    $v=(Get-InstalledModule -Name $n).Version;' +
         '    Write-Output ("INSTALLED|"+$v)' +
         '  }' +
@@ -1851,7 +1853,9 @@ $guiScript = {
                 }
                 $sc = (
                     '$ep="Stop";$n="' + $row.Name + '";$s="' + $scope + '";' +
-                    '$ErrorActionPreference=$ep;$ProgressPreference="SilentlyContinue";' +
+                    '$ErrorActionPreference="SilentlyContinue";$ProgressPreference="SilentlyContinue";' +
+                    '$ep_n="SilentlyContinue";if(-not(Get-PackageProvider -Name NuGet -EA $ep_n -ListAvailable|Where-Object{$_.Version -ge [Version]"2.8.5.201"})){Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser -Confirm:$false -EA Stop};Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -EA $ep_n;' +
+                    '$ErrorActionPreference=$ep;' +
                     '$ep2="SilentlyContinue";$n2=$n;$s2=$s;' +
                     'try{' +
                     '  $all=Get-InstalledModule -Name $n2 -AllVersions -EA $ep2 2>$null;' +
@@ -1859,14 +1863,14 @@ $guiScript = {
                     '  if($i){' +
                     '    $g=Find-Module -Name $n2 -EA $ep2 2>$null|Select-Object -First 1;' +
                     '    if($g -and ([Version]$g.Version -gt [Version]$i.Version)){' +
-                    '      Install-Module -Name $n2 -Scope $s2 -Force -AllowClobber -SkipPublisherCheck;' +
+                    '      if($PSVersionTable.PSVersion.Major -ge 7){Install-Module -Name $n2 -Scope $s2 -Force -AllowClobber -SkipPublisherCheck -Repository PSGallery -AcceptLicense}else{Install-Module -Name $n2 -Scope $s2 -Force -AllowClobber -SkipPublisherCheck};' +
                     '      $newVer=(Get-InstalledModule -Name $n2 -EA $ep2|Sort-Object Version -Desc|Select-Object -First 1).Version;' +
                     '      $old=$all|Where-Object{[Version]$_.Version -lt [Version]$newVer};' +
                     '      foreach($o in $old){try{Uninstall-Module -Name $n2 -RequiredVersion $o.Version -Force -EA $ep2}catch{}};' +
                     '      Write-Output ("UPDATED|"+$newVer)' +
                     '    } else{Write-Output ("UPTODATE|"+$i.Version)}' +
                     '  } else{' +
-                    '    Install-Module -Name $n2 -Scope $s2 -Force -AllowClobber -SkipPublisherCheck;' +
+                    '    if($PSVersionTable.PSVersion.Major -ge 7){Install-Module -Name $n2 -Scope $s2 -Force -AllowClobber -SkipPublisherCheck -Repository PSGallery -AcceptLicense}else{Install-Module -Name $n2 -Scope $s2 -Force -AllowClobber -SkipPublisherCheck};' +
                     '    $v=(Get-InstalledModule -Name $n2 -EA $ep2|Sort-Object Version -Desc|Select-Object -First 1).Version;' +
                     '    Write-Output ("INSTALLED|"+$v)' +
                     '  }' +
@@ -2554,7 +2558,7 @@ $guiScript = {
                 '$ErrorActionPreference="Stop";$ProgressPreference="SilentlyContinue";' +
                 'try{' +
                 '  # 1. Install in target scope' +
-                '  Install-Module -Name $n -Scope $s -Force -AllowClobber -SkipPublisherCheck;' +
+                '  if($PSVersionTable.PSVersion.Major -ge 7){Install-Module -Name $n -Scope $s -Force -AllowClobber -SkipPublisherCheck -Repository PSGallery -AcceptLicense}else{Install-Module -Name $n -Scope $s -Force -AllowClobber -SkipPublisherCheck};' +
                 '  $newMod=Get-InstalledModule $n -EA $ep|Sort-Object Version -Desc|Select-Object -First 1;' +
                 '  $v=$newMod.Version;' +
                 '  # 2. Get old scope module paths (all versions) before uninstall' +
