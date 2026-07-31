@@ -199,19 +199,17 @@ function Invoke-ModInstall {
     Write-Log "Install [$Name] via $Exe scope=$Scope" 'INFO'
     $sc = (
         '$ep="Stop";$n="' + $Name + '";$s="' + $Scope + '";' +
-        '$ErrorActionPreference="SilentlyContinue";$ProgressPreference="SilentlyContinue";' +
-        '$ep_n="SilentlyContinue";if(-not(Get-PackageProvider -Name NuGet -EA $ep_n -ListAvailable|Where-Object{$_.Version -ge [Version]"2.8.5.201"})){Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser -EA Stop};Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -EA $ep_n;' +
-        '$ErrorActionPreference=$ep;' +
+        '$ErrorActionPreference=$ep;$ProgressPreference="SilentlyContinue";' +
         'try{' +
         '  $i=Get-InstalledModule -Name $n -EA SilentlyContinue;' +
         '  if($i){' +
         '    $g=Find-Module -Name $n -EA SilentlyContinue;' +
         '    if($g -and ([Version]$g.Version -gt [Version]$i.Version)){' +
-        '      Update-Module -Name $n -Scope $s -Force -AcceptLicense;' +
+        '      Update-Module -Name $n -Scope $s -Force;' +
         '      Write-Output ("UPDATED|"+$g.Version)' +
         '    }else{Write-Output ("UPTODATE|"+$i.Version)}' +
         '  }else{' +
-        '    Install-Module -Name $n -Scope $s -Force -AllowClobber -SkipPublisherCheck -Repository PSGallery -AcceptLicense;' +
+        '    Install-Module -Name $n -Scope $s -Force -AllowClobber -SkipPublisherCheck;' +
         '    $v=(Get-InstalledModule -Name $n).Version;' +
         '    Write-Output ("INSTALLED|"+$v)' +
         '  }' +
@@ -1853,9 +1851,7 @@ $guiScript = {
                 }
                 $sc = (
                     '$ep="Stop";$n="' + $row.Name + '";$s="' + $scope + '";' +
-                    '$ErrorActionPreference="SilentlyContinue";$ProgressPreference="SilentlyContinue";' +
-                    '$ep_n="SilentlyContinue";if(-not(Get-PackageProvider -Name NuGet -EA $ep_n -ListAvailable|Where-Object{$_.Version -ge [Version]"2.8.5.201"})){Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser -EA Stop};Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -EA $ep_n;' +
-                    '$ErrorActionPreference=$ep;' +
+                    '$ErrorActionPreference=$ep;$ProgressPreference="SilentlyContinue";' +
                     '$ep2="SilentlyContinue";$n2=$n;$s2=$s;' +
                     'try{' +
                     '  $all=Get-InstalledModule -Name $n2 -AllVersions -EA $ep2 2>$null;' +
@@ -1863,14 +1859,14 @@ $guiScript = {
                     '  if($i){' +
                     '    $g=Find-Module -Name $n2 -EA $ep2 2>$null|Select-Object -First 1;' +
                     '    if($g -and ([Version]$g.Version -gt [Version]$i.Version)){' +
-                    '      Install-Module -Name $n2 -Scope $s2 -Force -AllowClobber -SkipPublisherCheck -Repository PSGallery -AcceptLicense;' +
+                    '      Install-Module -Name $n2 -Scope $s2 -Force -AllowClobber -SkipPublisherCheck;' +
                     '      $newVer=(Get-InstalledModule -Name $n2 -EA $ep2|Sort-Object Version -Desc|Select-Object -First 1).Version;' +
                     '      $old=$all|Where-Object{[Version]$_.Version -lt [Version]$newVer};' +
                     '      foreach($o in $old){try{Uninstall-Module -Name $n2 -RequiredVersion $o.Version -Force -EA $ep2}catch{}};' +
                     '      Write-Output ("UPDATED|"+$newVer)' +
                     '    } else{Write-Output ("UPTODATE|"+$i.Version)}' +
                     '  } else{' +
-                    '    Install-Module -Name $n2 -Scope $s2 -Force -AllowClobber -SkipPublisherCheck -Repository PSGallery -AcceptLicense;' +
+                    '    Install-Module -Name $n2 -Scope $s2 -Force -AllowClobber -SkipPublisherCheck;' +
                     '    $v=(Get-InstalledModule -Name $n2 -EA $ep2|Sort-Object Version -Desc|Select-Object -First 1).Version;' +
                     '    Write-Output ("INSTALLED|"+$v)' +
                     '  }' +
@@ -1976,10 +1972,22 @@ $guiScript = {
                 DoFilter; ReloadLogView
                 # Auto-rescan to confirm actual installed versions
                 TL '--- Batch complete. Auto-refreshing scan...' 'BATCH'
-                $window.Dispatcher.BeginInvoke([System.Action]{
-                    $btnRefresh.RaiseEvent([System.Windows.RoutedEventArgs]::new(
-                        [System.Windows.Controls.Button]::ClickEvent))
-                }, [System.Windows.Threading.DispatcherPriority]::Background) | Out-Null
+                # If a PS5 pass is pending (both-engines mode), start it now
+                if ($script:PendingPS5Batch) {
+                    $pb = $script:PendingPS5Batch
+                    $script:PendingPS5Batch = $null
+                    TL '--- Starting PS5 pass...' 'BATCH'
+                    $script:BatchTimer.Stop()
+                    # Small sleep to let the UI breathe, then start PS5 batch
+                    Start-Sleep -Milliseconds 300
+                    StartBatch $pb.rows $pb.exe $pb.scope
+                } else {
+                    $script:BatchTimer.Stop()
+                    $window.Dispatcher.BeginInvoke([System.Action]{
+                        $btnRefresh.RaiseEvent([System.Windows.RoutedEventArgs]::new(
+                            [System.Windows.Controls.Button]::ClickEvent))
+                    }, [System.Windows.Threading.DispatcherPriority]::Background) | Out-Null
+                }
             }
         })
         $script:BatchTimer.Start()
@@ -1997,60 +2005,235 @@ $guiScript = {
     }
 
     # RunSmartBatch: run PS7 pass (for V7 modules) + PS5 pass (for V5-only modules)
-    function RunSmartBatch([object[]]$rows, [string]$scope) {
+
+    # =====================================================================
+    #  ENGINE SELECTION DIALOG
+    #  Returns hashtable: @{ PS5=$true/$false; PS7=$true/$false; Scope=... }
+    #  or $null if cancelled.
+    # =====================================================================
+
+    # Modules that require PS7 and should NOT be installed via PS5
+    $script:PS5UnsupportedModules = @(
+        'ExchangeOnlineManagement',
+        'Microsoft.Graph',
+        'Microsoft.Graph.Authentication',
+        'Microsoft.Graph.Users',
+        'Microsoft.Graph.Groups',
+        'Microsoft.Graph.Mail',
+        'Microsoft.Graph.Calendar',
+        'Microsoft.Graph.Reports',
+        'Microsoft.Graph.Identity.DirectoryManagement',
+        'MicrosoftTeams',
+        'Az',
+        'Az.Accounts',
+        'Az.Resources',
+        'Az.Network',
+        'Az.Compute',
+        'Az.Storage',
+        'Az.KeyVault',
+        'Az.Monitor',
+        'Az.Websites',
+        'Az.Automation',
+        'Az.ContainerRegistry',
+        'Az.Dns',
+        'Az.Sql',
+        'Az.OperationalInsights',
+        'Az.PolicyInsights',
+        'Az.RecoveryServices',
+        'Az.SecurityInsights',
+        'PnP.PowerShell',
+        ''
+    )
+
+        function ShowEngineDialog([int]$count, [string]$action) {
+        $e7 = $engines | Where-Object { $_.Tag -eq 'PS7' -and $_.OK } | Select-Object -First 1
+        $e5 = $engines | Where-Object { $_.Tag -eq 'PS5' -and $_.OK } | Select-Object -First 1
+        $scope = GetScope
+
+        $dlgXaml = @'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Install / Update Options"
+        Width="480" Height="330"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        Background="#0A0A16" Foreground="#C8C8E6">
+  <Window.Resources>
+    <Style TargetType="CheckBox">
+      <Setter Property="Foreground" Value="#C8C8E6"/>
+      <Setter Property="FontFamily" Value="Segoe UI"/>
+      <Setter Property="FontSize"   Value="13"/>
+      <Setter Property="Margin"     Value="0,6,0,0"/>
+    </Style>
+    <Style TargetType="TextBlock">
+      <Setter Property="Foreground" Value="#C8C8E6"/>
+      <Setter Property="FontFamily" Value="Segoe UI"/>
+    </Style>
+    <Style TargetType="Button">
+      <Setter Property="FontFamily"  Value="Segoe UI"/>
+      <Setter Property="FontSize"    Value="12"/>
+      <Setter Property="Padding"     Value="18,6"/>
+      <Setter Property="Cursor"      Value="Hand"/>
+      <Setter Property="BorderThickness" Value="1"/>
+    </Style>
+  </Window.Resources>
+  <Grid Margin="24,20,24,20">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="16"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="20"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="20"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+
+    <!-- Title -->
+    <TextBlock Grid.Row="0" FontSize="15" FontWeight="Bold" Foreground="#5888FF"
+               Text="Select engines for installation"/>
+
+    <!-- Module count -->
+    <TextBlock Grid.Row="2" FontSize="12" Foreground="#7070B0"
+               Name="lblCount"/>
+
+    <!-- Engine checkboxes -->
+    <StackPanel Grid.Row="4">
+      <TextBlock Text="Install / Update via:" FontSize="12"
+                 Foreground="#9090C0" Margin="0,0,0,6"/>
+      <CheckBox Name="chkPS5" IsChecked="True"/>
+      <CheckBox Name="chkPS7" IsChecked="True"/>
+    </StackPanel>
+
+    <!-- Scope -->
+    <StackPanel Grid.Row="6" Orientation="Horizontal">
+      <TextBlock Text="Scope: " FontSize="12" Foreground="#9090C0"
+                 VerticalAlignment="Center"/>
+      <TextBlock Name="lblScope" FontSize="12" FontWeight="Bold"
+                 Foreground="#5888FF" VerticalAlignment="Center"/>
+    </StackPanel>
+
+    <!-- Buttons -->
+    <StackPanel Grid.Row="8" Orientation="Horizontal"
+                HorizontalAlignment="Right">
+      <Button Name="btnOK" Content="Install / Update"
+              Background="#08300F" Foreground="#30B450"
+              BorderBrush="#30B450" Margin="0,0,10,0"/>
+      <Button Name="btnCancel" Content="Cancel"
+              Background="#300808" Foreground="#D03030"
+              BorderBrush="#D03030"/>
+    </StackPanel>
+  </Grid>
+</Window>
+'@
+        try {
+            $reader  = [System.Xml.XmlReader]::Create([System.IO.StringReader]::new($dlgXaml))
+            $dlg     = [Windows.Markup.XamlReader]::Load($reader)
+
+            $chkPS5  = $dlg.FindName('chkPS5')
+            $chkPS7  = $dlg.FindName('chkPS7')
+            $lblCnt  = $dlg.FindName('lblCount')
+            $lblScp  = $dlg.FindName('lblScope')
+            $btnOK2  = $dlg.FindName('btnOK')
+            $btnCnc  = $dlg.FindName('btnCancel')
+
+            # Populate labels
+            $lblCnt.Text  = "$count module(s) selected  |  Action: $action"
+            $lblScp.Text  = $scope
+
+            # Engine labels & availability
+            if ($e5) {
+                $chkPS5.Content = "Windows PowerShell 5.1  [$($e5.Ver)]  — $($e5.Exe)"
+                $chkPS5.IsEnabled = $true
+            } else {
+                $chkPS5.Content = "Windows PowerShell 5.1  (not detected)"
+                $chkPS5.IsChecked = $false
+                $chkPS5.IsEnabled = $false
+            }
+            if ($e7) {
+                $chkPS7.Content = "PowerShell 7  [$($e7.Ver)]  — $($e7.Exe)"
+                $chkPS7.IsEnabled = $true
+            } else {
+                $chkPS7.Content = "PowerShell 7  (not installed)"
+                $chkPS7.IsChecked = $false
+                $chkPS7.IsEnabled = $false
+            }
+
+            $result = $null
+            $btnOK2.add_Click({
+                if (-not $chkPS5.IsChecked -and -not $chkPS7.IsChecked) {
+                    [System.Windows.MessageBox]::Show('Select at least one engine.') | Out-Null
+                    return
+                }
+                $script:_dlgResult = @{
+                    PS5   = [bool]$chkPS5.IsChecked
+                    PS7   = [bool]$chkPS7.IsChecked
+                    Scope = $scope
+                }
+                $dlg.DialogResult = $true
+                $dlg.Close()
+            })
+            $btnCnc.add_Click({
+                $script:_dlgResult = $null
+                $dlg.DialogResult = $false
+                $dlg.Close()
+            })
+
+            $script:_dlgResult = $null
+            $dlg.ShowDialog() | Out-Null
+            return $script:_dlgResult
+        } catch {
+            ML "Engine dialog error: $_" 'WARN'
+            # Fallback: return both engines
+            return @{ PS5=($e5 -ne $null); PS7=($e7 -ne $null); Scope=$scope }
+        }
+    }
+
+    function RunSmartBatch([object[]]$rows, [string]$scope, [hashtable]$engineChoice) {
         $e7 = $engines | Where-Object { $_.Tag -eq 'PS7' -and $_.OK } | Select-Object -First 1
         $e5 = $engines | Where-Object { $_.Tag -eq 'PS5' -and $_.OK } | Select-Object -First 1
 
-        # Separate: modules with PS7 version go to PS7, PS5-only go to PS5
-        $ps7rows = @($rows | Where-Object { $_.V7 })    # has PS7 version -> update via PS7
-        $ps5only = @($rows | Where-Object { $_.V5 -and -not $_.V7 })  # PS5 only -> update via PS5
-        # Modules with BOTH V5 and V7: also need PS5 update
-        $ps5also = @($rows | Where-Object { $_.V5 -and $_.V7 })
+        $usePS7 = $engineChoice.PS7 -and $e7
+        $usePS5 = $engineChoice.PS5 -and $e5
 
-        TL "=== SMART BATCH: PS7=$($ps7rows.Count) PS5-only=$($ps5only.Count) Both=$($ps5also.Count) ===" 'BATCH'
+        TL "=== SMART BATCH: usePS7=$usePS7 usePS5=$usePS5 modules=$($rows.Count) ===" 'BATCH'
 
-        if ($ps7rows.Count -gt 0 -and $e7) {
-            StartBatch $ps7rows $e7.Exe $scope
-        } elseif ($ps7rows.Count -gt 0 -and $e5) {
-            StartBatch $ps7rows $e5.Exe $scope  # fallback
-        }
-        if ($ps5only.Count -gt 0 -and $e5) {
-            StartBatch $ps5only $e5.Exe $scope
-        }
-        if ($ps5also.Count -gt 0 -and $e5 -and $e7) {
-            # Run PS5 update for the "both" modules too (PS7 pass already queued above)
-            $script:PendingPS5Batch = @{ rows=$ps5also; exe=$e5.Exe; scope=$scope }
+        # Filter out PS7-only modules from PS5 pass
+        $ps5rows = @($rows | Where-Object { $script:PS5UnsupportedModules -notcontains $_.Name })
+        if ($usePS7 -and $usePS5) {
+            TL "Installing via PS7 first, then PS5 ($($ps5rows.Count) compatible modules)..." 'BATCH'
+            StartBatch $rows $e7.Exe $scope
+            if ($ps5rows.Count -gt 0) {
+                $script:PendingPS5Batch = @{ rows=$ps5rows; exe=$e5.Exe; scope=$scope }
+            } else {
+                TL '--- No PS5-compatible modules to install via PS5.' 'BATCH'
+            }
+        } elseif ($usePS7) {
+            StartBatch $rows $e7.Exe $scope
+        } elseif ($usePS5) {
+            StartBatch $ps5rows $e5.Exe $scope
+        } else {
+            ML "No valid engine selected." 'WARN'
         }
     }
 
     $btnInst.add_Click({
-        $scope = GetScope
         $sel = @($allRows | Where-Object { $_.Sel })
         if ($sel.Count -eq 0) { [System.Windows.MessageBox]::Show('No modules selected.') | Out-Null; return }
-        $e7 = $engines | Where-Object { $_.Tag -eq 'PS7' -and $_.OK } | Select-Object -First 1
-        $e5 = $engines | Where-Object { $_.Tag -eq 'PS5' -and $_.OK } | Select-Object -First 1
-        $engDesc = if ($e7) { "PS7: $($e7.Exe)" } else { "PS5: $($e5.Exe)" }
-        $ans = [System.Windows.MessageBox]::Show(
-            "Install/Update $($sel.Count) module(s)`n`nWill update each module via its matching engine:`n  $engDesc`nScope: $scope`n`nContinue?",
-            'Confirm', [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Question)
-        if ($ans -eq 'Yes') { RunSmartBatch $sel $scope }
+        $choice = ShowEngineDialog $sel.Count 'Install / Update'
+        if ($choice) { RunSmartBatch $sel $choice.Scope $choice }
     })
 
     $btnUpdAll.add_Click({
-        $scope = GetScope
         $upd = @($allRows | Where-Object { $_.Up })
         if ($upd.Count -eq 0) {
             [System.Windows.MessageBox]::Show('No updates found. Run Refresh first.') | Out-Null; return
         }
-        $e7 = $engines | Where-Object { $_.Tag -eq 'PS7' -and $_.OK } | Select-Object -First 1
-        $e5 = $engines | Where-Object { $_.Tag -eq 'PS5' -and $_.OK } | Select-Object -First 1
-        $engDesc = if ($e7) { "PS7: $($e7.Exe)" } else { "PS5: $($e5.Exe)" }
-        $ans = [System.Windows.MessageBox]::Show(
-            "Update ALL $($upd.Count) module(s)?`n`nWill update each module via its matching engine:`n  $engDesc`nScope: $scope",
-            'Confirm All', [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Question)
-        if ($ans -eq 'Yes') {
+        $choice = ShowEngineDialog $upd.Count 'Update ALL Installed'
+        if ($choice) {
             foreach ($r in $upd) { $r.Sel = $true }
-            RunSmartBatch $upd $scope
+            RunSmartBatch $upd $choice.Scope $choice
         }
     })
 
@@ -2368,12 +2551,10 @@ $guiScript = {
             TL "MOVE $($mod.Name)  $fromScope -> $toScope" 'BATCH'
             $sc = (
                 '$ep="SilentlyContinue";$n="' + $mod.Name + '";$s="' + $toScope + '";$sf="' + $fromScope + '";' +
-                '$ErrorActionPreference="SilentlyContinue";$ProgressPreference="SilentlyContinue";' +
-                '$ep_n="SilentlyContinue";if(-not(Get-PackageProvider -Name NuGet -EA $ep_n -ListAvailable|Where-Object{$_.Version -ge [Version]"2.8.5.201"})){Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser -EA Stop};Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -EA $ep_n;' +
-                '$ErrorActionPreference="Stop";' +
+                '$ErrorActionPreference="Stop";$ProgressPreference="SilentlyContinue";' +
                 'try{' +
                 '  # 1. Install in target scope' +
-                '  Install-Module -Name $n -Scope $s -Force -AllowClobber -SkipPublisherCheck -Repository PSGallery -AcceptLicense;' +
+                '  Install-Module -Name $n -Scope $s -Force -AllowClobber -SkipPublisherCheck;' +
                 '  $newMod=Get-InstalledModule $n -EA $ep|Sort-Object Version -Desc|Select-Object -First 1;' +
                 '  $v=$newMod.Version;' +
                 '  # 2. Get old scope module paths (all versions) before uninstall' +
