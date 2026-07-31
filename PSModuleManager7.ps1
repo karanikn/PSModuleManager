@@ -2,11 +2,12 @@
 <#
 .SYNOPSIS  PowerShell Module Manager v7.0
 .DESCRIPTION
-    The ONLY reliable way to host WPF in a PS script:
-    1. Create a dedicated STA thread
-    2. Inside that thread: new Application(), then ShowDialog()
-    3. All UI runs on that thread - zero dispatcher issues
-    This is the same pattern used by SAPIEN PowerShell Studio.
+PSModuleManager is a single-file PowerShell script that launches a full WPF GUI for managing, scanning, installing, and maintaining PowerShell modules. It runs on a dedicated STA thread via a PowerShell runspace and communicates between the GUI and background workers using thread-safe concurrent queues.
+
+Author  : Nikolaos Karanikolas
+Version : 7.0
+Engines : Windows PowerShell 5.1  ·  PowerShell 7.x
+Theme   : Dark (switchable to Light)
 
 .NOTES
     Run from any PS version:
@@ -22,14 +23,7 @@ $ProgressPreference    = 'SilentlyContinue'
 # ============================================================
 #  LOGGING  (thread-safe via ConcurrentQueue)
 # ============================================================
-# If launched by karanik_WinMaintenance, use its log path so the launcher can tail our output
-if ($env:KARANIK_WM_LOGFILE -and $env:KARANIK_WM_LOGFILE.Trim()) {
-    $Global:LogFile = $env:KARANIK_WM_LOGFILE.Trim()
-    $logDir = [System.IO.Path]::GetDirectoryName($Global:LogFile)
-    if (-not (Test-Path $logDir)) { New-Item -Path $logDir -ItemType Directory -Force | Out-Null }
-} else {
-    $Global:LogFile = Join-Path $env:TEMP ('PSModMgr_' + (Get-Date -Format 'yyyyMMdd_HHmmss') + '.log')
-}
+$Global:LogFile  = Join-Path $env:TEMP ('PSModMgr_' + (Get-Date -Format 'yyyyMMdd_HHmmss') + '.log')
 $Global:LogQ     = [System.Collections.Concurrent.ConcurrentQueue[string]]::new()
 
 function Write-Log {
@@ -37,18 +31,14 @@ function Write-Log {
     $e = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')][$Lvl] $Msg"
     $Global:LogQ.Enqueue($e)
     try { Add-Content -Path $Global:LogFile -Value $e -Encoding UTF8 } catch {}
-    # Only write to console when running as .ps1 (not compiled EXE with -noConsole)
-    # ps2exe sets $IsEXE = $true and stdout is redirected to MessageBox otherwise
-    if (-not $Global:IsCompiledEXE) {
-        $c = switch ($Lvl) {
-            'ERROR'   { 'Red'    }
-            'WARN'    { 'Yellow' }
-            'SUCCESS' { 'Green'  }
-            'DEBUG'   { 'Gray'   }
-            default   { 'Cyan'   }
-        }
-        Write-Host $e -ForegroundColor $c
+    $c = switch ($Lvl) {
+        'ERROR'   { 'Red'    }
+        'WARN'    { 'Yellow' }
+        'SUCCESS' { 'Green'  }
+        'DEBUG'   { 'Gray'   }
+        default   { 'Cyan'   }
     }
+    Write-Host $e -ForegroundColor $c
 }
 
 # ============================================================
@@ -217,7 +207,7 @@ function Invoke-ModInstall {
         '  if($i){' +
         '    $g=Find-Module -Name $n -EA SilentlyContinue;' +
         '    if($g -and ([Version]$g.Version -gt [Version]$i.Version)){' +
-        '      Update-Module -Name $n -Scope $s -Force;' +
+        '      Update-Module -Name $n -Scope $s -Force -AcceptLicense;' +
         '      Write-Output ("UPDATED|"+$g.Version)' +
         '    }else{Write-Output ("UPTODATE|"+$i.Version)}' +
         '  }else{' +
@@ -1567,108 +1557,66 @@ $guiScript = {
             }
 
             # - STEP 1: Get ALL installed modules in ONE call per engine -
-            # Uses temp .ps1 script + temp output file to avoid:
-            #   1. stdout capture issues with & operator in MTA Runspaces
-            #   2. quoting nightmares with -Command on large inline scripts
+            # Use Get-Module -ListAvailable (fast, local only) + Get-InstalledModule for PSGallery scope
+            # This avoids 65 separate process spawns
             function GetInstalledBatch([string]$Exe, [string]$Tag) {
                 if (-not $Exe) { return @{} }
                 LogIt "[$Tag] Batch scan via $Exe ..."
 
-                $guid    = [guid]::NewGuid().ToString('N').Substring(0,8)
-                $tmpDir  = [System.IO.Path]::GetTempPath()
-                $tmpPs1  = [System.IO.Path]::Combine($tmpDir, "PSModMgr_scan_${Tag}_${guid}.ps1")
-                $tmpOut  = [System.IO.Path]::Combine($tmpDir, "PSModMgr_scan_${Tag}_${guid}.txt")
+                # Build PS command that:
+                # 1. Gets ALL installed modules at once with Get-Module -ListAvailable
+                # 2. Also checks Get-InstalledModule for accurate scope
+                # Output format: NAME|VER|SCOPE
+                $cmd = (
+                    '$ep="SilentlyContinue";$ErrorActionPreference=$ep;$ProgressPreference=$ep;' +
+                    # PSGet is authoritative: -AllVersions then pick highest per module
+                    '$psg=@{};' +
+                    'Get-InstalledModule -AllVersions -EA $ep 2>$null|' +
+                    'Sort-Object Name,Version|Group-Object Name|' +
+                    'ForEach-Object{$pi=$_.Group|Sort-Object Version -Desc|Select-Object -First 1;$psg[$pi.Name]=$pi};' +
+                    # Get-Module -ListAvailable for built-in / WinPS modules not in PSGet
+                    '$lav=Get-Module -ListAvailable -EA $ep 2>$null|' +
+                    'Sort-Object Name,Version|Group-Object Name|' +
+                    'ForEach-Object{$_.Group|Sort-Object Version -Desc|Select-Object -First 1};' +
+                    '$seen=@{};' +
+                    # Output PSGet modules first (accurate version after updates)
+                    'foreach($pi in $psg.Values){' +
+                    '  $sc="Unknown";$base=$pi.InstalledLocation;' +
+                    '  if($base -like "*\Windows\System32\*" -or $base -like "*\Windows\SysWOW64\*"){$sc="System"}' +
+                    '  elseif($base -like "*\Program Files\*"){$sc="AllUsers"}' +
+                    '  elseif($base -like "*\Documents\*" -or $base -like "*\CurrentUser\*" -or $base -like "*\AppData\*"){$sc="CurrentUser"}' +
+                    '  elseif($base -like "*\AllUsers\*"){$sc="AllUsers"}' +
+                    '  elseif($base){' +
+                    '    $u=[System.Environment]::GetFolderPath("UserProfile");' +
+                    '    if($base.StartsWith($u)){$sc="CurrentUser"}else{$sc="AllUsers"}' +
+                    '  };' +
+                    '  $seen[$pi.Name]=1;' +
+                    '  Write-Output ($pi.Name+"|"+$pi.Version.ToString()+"|"+$sc+"|"+$base)' +
+                    '};' +
+                    # Then built-in WinPS/PS7 modules not tracked by PSGet
+                    'foreach($m in $lav){' +
+                    '  if($seen.ContainsKey($m.Name)){continue};' +
+                    '  $sc="Unknown";$base=$m.ModuleBase;' +
+                    '  if($base -like "*\Windows\System32\*" -or $base -like "*\Windows\SysWOW64\*"){$sc="System"}' +
+                    '  elseif($base -like "*\Program Files\WindowsPowerShell\*"){$sc="WinPS-System"}' +
+                    '  elseif($base -like "*\Program Files\PowerShell\*"){$sc="PS7-System"}' +
+                    '  elseif($base -like "*\WindowsPowerShell\Modules*"){$sc="AllUsers"}' +
+                    '  elseif($base -like "*\Documents\*" -or $base -like "*\CurrentUser\*"){$sc="CurrentUser"};' +
+                    '  Write-Output ($m.Name+"|"+$m.Version.ToString()+"|"+$sc+"|"+$base)' +
+                    '}'
 
-                # Write the scan script to a temp .ps1 file
-                $scriptBody = @'
-$ep="SilentlyContinue"; $ErrorActionPreference=$ep; $ProgressPreference=$ep
-$outF = $args[0]
-$lines = [System.Collections.Generic.List[string]]::new()
-
-# PSGet modules (authoritative for installed-via-gallery)
-$psg = @{}
-Get-InstalledModule -AllVersions -EA $ep 2>$null |
-    Sort-Object Name, Version | Group-Object Name |
-    ForEach-Object {
-        $pi = $_.Group | Sort-Object Version -Descending | Select-Object -First 1
-        $psg[$pi.Name] = $pi
-    }
-
-# Get-Module -ListAvailable for built-in / system modules
-$lav = Get-Module -ListAvailable -EA $ep 2>$null |
-    Sort-Object Name, Version | Group-Object Name |
-    ForEach-Object { $_.Group | Sort-Object Version -Descending | Select-Object -First 1 }
-
-$seen = @{}
-
-foreach ($pi in $psg.Values) {
-    $sc = "Unknown"; $base = $pi.InstalledLocation
-    if     ($base -like "*\Windows\System32\*" -or $base -like "*\Windows\SysWOW64\*") { $sc = "System" }
-    elseif ($base -like "*\Program Files\*")    { $sc = "AllUsers" }
-    elseif ($base -like "*\Documents\*" -or $base -like "*\CurrentUser\*" -or $base -like "*\AppData\*") { $sc = "CurrentUser" }
-    elseif ($base -like "*\AllUsers\*")         { $sc = "AllUsers" }
-    elseif ($base) {
-        $u = [System.Environment]::GetFolderPath("UserProfile")
-        if ($base.StartsWith($u)) { $sc = "CurrentUser" } else { $sc = "AllUsers" }
-    }
-    $seen[$pi.Name] = 1
-    $lines.Add($pi.Name + "|" + $pi.Version.ToString() + "|" + $sc + "|" + $base)
-}
-
-foreach ($m in $lav) {
-    if ($seen.ContainsKey($m.Name)) { continue }
-    $sc = "Unknown"; $base = $m.ModuleBase
-    if     ($base -like "*\Windows\System32\*" -or $base -like "*\Windows\SysWOW64\*") { $sc = "System" }
-    elseif ($base -like "*\Program Files\WindowsPowerShell\*") { $sc = "WinPS-System" }
-    elseif ($base -like "*\Program Files\PowerShell\*")        { $sc = "PS7-System" }
-    elseif ($base -like "*\WindowsPowerShell\Modules*")        { $sc = "AllUsers" }
-    elseif ($base -like "*\Documents\*" -or $base -like "*\CurrentUser\*") { $sc = "CurrentUser" }
-    $lines.Add($m.Name + "|" + $m.Version.ToString() + "|" + $sc + "|" + $base)
-}
-
-[System.IO.File]::WriteAllLines($outF, $lines, [System.Text.Encoding]::UTF8)
-'@
+                )
                 $res = @{}
                 try {
-                    [System.IO.File]::WriteAllText($tmpPs1, $scriptBody, [System.Text.Encoding]::UTF8)
-
-                    $psi = [System.Diagnostics.ProcessStartInfo]::new()
-                    $psi.FileName  = $Exe
-                    $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -NonInteractive -File `"$tmpPs1`" `"$tmpOut`""
-                    $psi.UseShellExecute = $false
-                    $psi.CreateNoWindow  = $true
-                    $psi.RedirectStandardOutput = $false
-                    $psi.RedirectStandardError  = $false
-
-                    $proc = [System.Diagnostics.Process]::Start($psi)
-                    $exited = $proc.WaitForExit(120000)
-                    if (-not $exited) {
-                        try { $proc.Kill() } catch {}
-                        LogIt "[$Tag] TIMEOUT waiting for scan process"
-                    } else {
-                        LogIt "[$Tag] Process exited with code $($proc.ExitCode)"
-                    }
-
-                    if ([System.IO.File]::Exists($tmpOut)) {
-                        $fileLines = [System.IO.File]::ReadAllLines($tmpOut, [System.Text.Encoding]::UTF8)
-                        LogIt "[$Tag] Output file has $($fileLines.Count) lines"
-                        foreach ($x in $fileLines) {
-                            $x = $x.Trim()
-                            if (-not $x) { continue }
-                            $parts = $x.Split('|', 4)
-                            if ($parts.Count -ge 3 -and $parts[0] -and $parts[1]) {
-                                $res[$parts[0]] = @{ Ver=$parts[1]; Scope=$parts[2]; Base=if($parts.Count -ge 4){$parts[3]}else{''} }
-                            }
+                    $out = & $Exe -NoProfile -NonInteractive -Command $cmd 2>$null
+                    foreach ($ln in $out) {
+                        $x = $ln.ToString().Trim()
+                        $parts = $x.Split('|', 4)
+                        if ($parts.Count -ge 3 -and $parts[0] -and $parts[1]) {
+                            $res[$parts[0]] = @{ Ver=$parts[1]; Scope=$parts[2]; Base=if($parts.Count -ge 4){$parts[3]}else{''} }
                         }
-                    } else {
-                        LogIt "[$Tag] WARNING: Output file not created - child process may have failed"
                     }
-                } catch {
-                    LogIt "[$Tag] ERROR: $_"
-                } finally {
-                    try { if ([System.IO.File]::Exists($tmpPs1)) { [System.IO.File]::Delete($tmpPs1) } } catch {}
-                    try { if ([System.IO.File]::Exists($tmpOut)) { [System.IO.File]::Delete($tmpOut) } } catch {}
-                }
+                } catch { LogIt "[$Tag] ERROR: $_" }
                 LogIt "[$Tag] Found $($res.Count) installed modules total."
                 return $res
             }
@@ -1677,68 +1625,29 @@ foreach ($m in $lav) {
             function GetGalleryBatch([string]$Exe, [string[]]$ModNames) {
                 if (-not $Exe -or $ModNames.Count -eq 0) { return @{} }
                 LogIt "Gallery: checking $($ModNames.Count) modules via $Exe ..."
-
-                $guid    = [guid]::NewGuid().ToString('N').Substring(0,8)
-                $tmpDir  = [System.IO.Path]::GetTempPath()
-                $tmpPs1  = [System.IO.Path]::Combine($tmpDir, "PSModMgr_gal_${guid}.ps1")
-                $tmpOut  = [System.IO.Path]::Combine($tmpDir, "PSModMgr_gal_${guid}.txt")
-                $tmpNames = [System.IO.Path]::Combine($tmpDir, "PSModMgr_gal_names_${guid}.txt")
-
+                $nameArr = ($ModNames | ForEach-Object { '"' + ($_ -replace '"','') + '"' }) -join ','
+                $cmd = (
+                    '$ep="SilentlyContinue";$ErrorActionPreference=$ep;$ProgressPreference=$ep;' +
+                    '$names=@(' + $nameArr + ');' +
+                    # Use Find-Module with batch - much faster than one-by-one
+                    'try{$found=Find-Module -Name $names -EA $ep 2>$null;' +
+                    'foreach($m in $found){Write-Output ($m.Name+"|"+$m.Version.ToString())}}' +
+                    'catch{' +
+                    # Fallback: one by one if batch fails
+                    'foreach($n in $names){' +
+                    '  $g=Find-Module -Name $n -EA $ep 2>$null|Select-Object -First 1;' +
+                    '  if($g){Write-Output ($n+"|"+$g.Version.ToString())}' +
+                    '}}'
+                )
                 $gal = @{}
                 try {
-                    # Write module names to a temp file (avoids argument length limits)
-                    [System.IO.File]::WriteAllLines($tmpNames, $ModNames, [System.Text.Encoding]::UTF8)
-
-                    $scriptBody = @'
-$ep="SilentlyContinue"; $ErrorActionPreference=$ep; $ProgressPreference=$ep
-$namesFile = $args[0]
-$outF      = $args[1]
-$names     = @([System.IO.File]::ReadAllLines($namesFile, [System.Text.Encoding]::UTF8) | Where-Object { $_.Trim() })
-$lines     = [System.Collections.Generic.List[string]]::new()
-
-try {
-    $found = Find-Module -Name $names -EA $ep 2>$null
-    foreach ($m in $found) { $lines.Add($m.Name + "|" + $m.Version.ToString()) }
-} catch {
-    foreach ($n in $names) {
-        $g = Find-Module -Name $n -EA $ep 2>$null | Select-Object -First 1
-        if ($g) { $lines.Add($n + "|" + $g.Version.ToString()) }
-    }
-}
-[System.IO.File]::WriteAllLines($outF, $lines, [System.Text.Encoding]::UTF8)
-'@
-                    [System.IO.File]::WriteAllText($tmpPs1, $scriptBody, [System.Text.Encoding]::UTF8)
-
-                    $psi = [System.Diagnostics.ProcessStartInfo]::new()
-                    $psi.FileName  = $Exe
-                    $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -NonInteractive -File `"$tmpPs1`" `"$tmpNames`" `"$tmpOut`""
-                    $psi.UseShellExecute = $false
-                    $psi.CreateNoWindow  = $true
-                    $psi.RedirectStandardOutput = $false
-                    $psi.RedirectStandardError  = $false
-
-                    $proc = [System.Diagnostics.Process]::Start($psi)
-                    $exited = $proc.WaitForExit(300000)
-                    if (-not $exited) {
-                        try { $proc.Kill() } catch {}
-                        LogIt "Gallery TIMEOUT"
-                    }
-
-                    if ([System.IO.File]::Exists($tmpOut)) {
-                        $fileLines = [System.IO.File]::ReadAllLines($tmpOut, [System.Text.Encoding]::UTF8)
-                        foreach ($x in $fileLines) {
-                            $x = $x.Trim()
-                            if (-not $x) { continue }
-                            $p = $x.Split('|', 2)
-                            if ($p.Count -eq 2 -and $p[0] -and $p[1]) { $gal[$p[0]] = $p[1] }
-                        }
+                    $out = & $Exe -NoProfile -NonInteractive -Command $cmd 2>$null
+                    foreach ($ln in $out) {
+                        $x = $ln.ToString().Trim()
+                        $p = $x.Split('|', 2)
+                        if ($p.Count -eq 2 -and $p[0] -and $p[1]) { $gal[$p[0]] = $p[1] }
                     }
                 } catch { LogIt "Gallery ERROR: $_" }
-                finally {
-                    try { if ([System.IO.File]::Exists($tmpPs1))   { [System.IO.File]::Delete($tmpPs1) } }   catch {}
-                    try { if ([System.IO.File]::Exists($tmpOut))   { [System.IO.File]::Delete($tmpOut) } }   catch {}
-                    try { if ([System.IO.File]::Exists($tmpNames)) { [System.IO.File]::Delete($tmpNames) } } catch {}
-                }
                 LogIt "Gallery: got versions for $($gal.Count)/$($ModNames.Count) modules."
                 return $gal
             }
@@ -1942,64 +1851,39 @@ try {
                     try { Add-Content -Path $logF -Value "[$(Get-Date -f 'HH:mm:ss')] Cancelled." -Encoding UTF8 } catch {}
                     break
                 }
-                BLog "  Installing/Updating: $($row.Name) ..."
+                $sc = (
+                    '$ep="Stop";$n="' + $row.Name + '";$s="' + $scope + '";' +
+                    '$ErrorActionPreference="SilentlyContinue";$ProgressPreference="SilentlyContinue";' +
+                    '$ep_n="SilentlyContinue";if(-not(Get-PackageProvider -Name NuGet -EA $ep_n -ListAvailable|Where-Object{$_.Version -ge [Version]"2.8.5.201"})){Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser -EA Stop};Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -EA $ep_n;' +
+                    '$ErrorActionPreference=$ep;' +
+                    '$ep2="SilentlyContinue";$n2=$n;$s2=$s;' +
+                    'try{' +
+                    '  $all=Get-InstalledModule -Name $n2 -AllVersions -EA $ep2 2>$null;' +
+                    '  $i=$all|Sort-Object Version -Desc|Select-Object -First 1;' +
+                    '  if($i){' +
+                    '    $g=Find-Module -Name $n2 -EA $ep2 2>$null|Select-Object -First 1;' +
+                    '    if($g -and ([Version]$g.Version -gt [Version]$i.Version)){' +
+                    '      Install-Module -Name $n2 -Scope $s2 -Force -AllowClobber -SkipPublisherCheck -Repository PSGallery -AcceptLicense;' +
+                    '      $newVer=(Get-InstalledModule -Name $n2 -EA $ep2|Sort-Object Version -Desc|Select-Object -First 1).Version;' +
+                    '      $old=$all|Where-Object{[Version]$_.Version -lt [Version]$newVer};' +
+                    '      foreach($o in $old){try{Uninstall-Module -Name $n2 -RequiredVersion $o.Version -Force -EA $ep2}catch{}};' +
+                    '      Write-Output ("UPDATED|"+$newVer)' +
+                    '    } else{Write-Output ("UPTODATE|"+$i.Version)}' +
+                    '  } else{' +
+                    '    Install-Module -Name $n2 -Scope $s2 -Force -AllowClobber -SkipPublisherCheck -Repository PSGallery -AcceptLicense;' +
+                    '    $v=(Get-InstalledModule -Name $n2 -EA $ep2|Sort-Object Version -Desc|Select-Object -First 1).Version;' +
+                    '    Write-Output ("INSTALLED|"+$v)' +
+                    '  }' +
+                    '} catch{Write-Output ("ERROR|"+$_.Exception.Message.Replace("`n"," "))}'
+                )
                 $res = 'ERROR|Unknown'
                 try {
-                    # Use temp script + temp output file (same pattern as scan)
-                    $bGuid   = [guid]::NewGuid().ToString('N').Substring(0,8)
-                    $bTmpDir = [System.IO.Path]::GetTempPath()
-                    $bTmpPs1 = [System.IO.Path]::Combine($bTmpDir, "PSModMgr_inst_${bGuid}.ps1")
-                    $bTmpOut = [System.IO.Path]::Combine($bTmpDir, "PSModMgr_inst_${bGuid}.txt")
-
-                    $bScript = @"
-`$ep="Stop";`$n="$($row.Name -replace '"','')";`$s="$scope"
-`$ErrorActionPreference="SilentlyContinue";`$ProgressPreference="SilentlyContinue"
-`$ep_n="SilentlyContinue"
-if(-not(Get-PackageProvider -Name NuGet -EA `$ep_n -ListAvailable|Where-Object{`$_.Version -ge [Version]"2.8.5.201"})){
-  Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser -EA Stop}
-Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -EA `$ep_n
-`$ErrorActionPreference=`$ep
-`$ep2="SilentlyContinue";`$outF="$($bTmpOut -replace '\\','\\')"
-try{
-  `$all=Get-InstalledModule -Name `$n -AllVersions -EA `$ep2 2>`$null
-  `$i=`$all|Sort-Object Version -Desc|Select-Object -First 1
-  if(`$i){
-    `$g=Find-Module -Name `$n -EA `$ep2 2>`$null|Select-Object -First 1
-    if(`$g -and ([Version]`$g.Version -gt [Version]`$i.Version)){
-      Install-Module -Name `$n -Scope `$s -Force -AllowClobber -SkipPublisherCheck -Repository PSGallery -AcceptLicense
-      `$newVer=(Get-InstalledModule -Name `$n -EA `$ep2|Sort-Object Version -Desc|Select-Object -First 1).Version
-      `$old=`$all|Where-Object{[Version]`$_.Version -lt [Version]`$newVer}
-      foreach(`$o in `$old){try{Uninstall-Module -Name `$n -RequiredVersion `$o.Version -Force -EA `$ep2}catch{}}
-      [System.IO.File]::WriteAllText(`$outF,"UPDATED|`$newVer",[System.Text.Encoding]::UTF8)
-    } else{[System.IO.File]::WriteAllText(`$outF,"UPTODATE|`$(`$i.Version)",[System.Text.Encoding]::UTF8)}
-  } else{
-    Install-Module -Name `$n -Scope `$s -Force -AllowClobber -SkipPublisherCheck -Repository PSGallery -AcceptLicense
-    `$v=(Get-InstalledModule -Name `$n -EA `$ep2|Sort-Object Version -Desc|Select-Object -First 1).Version
-    [System.IO.File]::WriteAllText(`$outF,"INSTALLED|`$v",[System.Text.Encoding]::UTF8)
-  }
-} catch{[System.IO.File]::WriteAllText(`$outF,"ERROR|`$(`$_.Exception.Message -replace '[\r\n]',' ')",[System.Text.Encoding]::UTF8)}
-"@
-                    [System.IO.File]::WriteAllText($bTmpPs1, $bScript, [System.Text.Encoding]::UTF8)
-
-                    $bPsi = [System.Diagnostics.ProcessStartInfo]::new()
-                    $bPsi.FileName  = $exe
-                    $bPsi.Arguments = "-NoProfile -ExecutionPolicy Bypass -NonInteractive -File `"$bTmpPs1`""
-                    $bPsi.UseShellExecute = $false
-                    $bPsi.CreateNoWindow  = $true
-                    $bPsi.RedirectStandardOutput = $false
-                    $bPsi.RedirectStandardError  = $false
-
-                    $bProc = [System.Diagnostics.Process]::Start($bPsi)
-                    $bExited = $bProc.WaitForExit(600000)  # 10 min per module
-                    if (-not $bExited) {
-                        try { $bProc.Kill() } catch {}
-                        $res = "ERROR|Timeout after 10 min"
-                    } elseif ([System.IO.File]::Exists($bTmpOut)) {
-                        $res = [System.IO.File]::ReadAllText($bTmpOut, [System.Text.Encoding]::UTF8).Trim()
+                    $out = & $exe -NoProfile -NonInteractive -Command $sc 2>&1
+                    foreach ($ln in $out) {
+                        $x = $ln.ToString().Trim()
+                        if ($x) { BLog "  RAW: $x" }
+                        if ($x -match '^\w+\|') { $res = $x; break }
                     }
-
-                    try { if ([System.IO.File]::Exists($bTmpPs1)) { [System.IO.File]::Delete($bTmpPs1) } } catch {}
-                    try { if ([System.IO.File]::Exists($bTmpOut)) { [System.IO.File]::Delete($bTmpOut) } } catch {}
                 } catch { $res = "ERROR|$_" }
 
                 $parts  = $res.Split('|', 2)
@@ -2484,7 +2368,9 @@ try{
             TL "MOVE $($mod.Name)  $fromScope -> $toScope" 'BATCH'
             $sc = (
                 '$ep="SilentlyContinue";$n="' + $mod.Name + '";$s="' + $toScope + '";$sf="' + $fromScope + '";' +
-                '$ErrorActionPreference="Stop";$ProgressPreference="SilentlyContinue";' +
+                '$ErrorActionPreference="SilentlyContinue";$ProgressPreference="SilentlyContinue";' +
+                '$ep_n="SilentlyContinue";if(-not(Get-PackageProvider -Name NuGet -EA $ep_n -ListAvailable|Where-Object{$_.Version -ge [Version]"2.8.5.201"})){Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser -EA Stop};Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -EA $ep_n;' +
+                '$ErrorActionPreference="Stop";' +
                 'try{' +
                 '  # 1. Install in target scope' +
                 '  Install-Module -Name $n -Scope $s -Force -AllowClobber -SkipPublisherCheck -Repository PSGallery -AcceptLicense;' +
@@ -3224,33 +3110,78 @@ $rows</table></body></html>
         $pnlCustomMods.Children.Clear()
         $lblRepoStatus.Text = "Loading repositories..."
 
-        # Query Get-PSRepository synchronously on the GUI thread - fast (<200ms), no runspace needed
-        $script:LiveRepos     = @()
-        $script:RepoRegState  = @{}
-        $script:RepoTrustState = @{}
-        try {
-            $ep = 'SilentlyContinue'
-            $repos = $null
-            try { $repos = Get-PSRepository -EA $ep 2>$null } catch {}
-            if ($repos) {
-                foreach ($r in $repos) {
-                    $prov = if ($r.PackageManagementProvider) { $r.PackageManagementProvider } else { '' }
-                    $obj  = [PSCustomObject]@{
-                        Name         = $r.Name
-                        Url          = $r.SourceLocation
-                        Policy       = $r.InstallationPolicy
-                        Provider     = $prov
-                        IsRegistered = $true
+        $eng = Get-RepoEngine
+        if (-not $eng) {
+            $lblRepoStatus.Text = "No engine available."
+            $script:RepoTabBusy = $false; return
+        }
+
+        $rs = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace()
+        $rs.ApartmentState = 'MTA'; $rs.ThreadOptions = 'ReuseThread'; $rs.Open()
+        $ps = [System.Management.Automation.PowerShell]::Create()
+        $ps.Runspace = $rs
+        $q  = [System.Collections.Concurrent.ConcurrentQueue[string]]::new()
+        $sb2 = {
+            param($exe, $q)
+            $cmd = (
+                '$ep="SilentlyContinue";$ErrorActionPreference=$ep;$ProgressPreference=$ep;' +
+                'if(-not(Get-Command Get-PSRepository -EA $ep)){$q2="NOMOD";Write-Output $q2;return};' +
+                'try{$repos=Get-PSRepository -EA $ep 2>$null}catch{$repos=@()};' +
+                'if(-not $repos){Write-Output "NONE";return};' +
+                'foreach($r in $repos){' +
+                '  Write-Output ("REPO^"+$r.Name+"^"+$r.SourceLocation+"^"+$r.InstallationPolicy+"^"+$r.PackageManagementProvider)' +
+                '}'
+            )
+            try {
+                $out = & $exe -NoProfile -NonInteractive -Command $cmd 2>$null
+                foreach ($ln in $out) { $q.Enqueue($ln.ToString().Trim()) }
+            } catch { $q.Enqueue("ERR^$_") }
+            $q.Enqueue("DONE")
+        }
+        [void]$ps.AddScript($sb2)
+        [void]$ps.AddParameters(@{ exe = $eng.Exe; q = $q })
+        $ar = $ps.BeginInvoke()
+        $script:LiveRepos = @()
+
+        $t = [System.Windows.Threading.DispatcherTimer]::new()
+        $t.Interval = [System.TimeSpan]::FromMilliseconds(300)
+        $t.add_Tick({
+            $raw = $null
+            while ($q.TryDequeue([ref]$raw)) {
+                if ($raw -eq 'DONE') {
+                    $t.Stop()
+                    try { $ps.EndInvoke($ar) | Out-Null; $ps.Dispose(); $rs.Close(); $rs.Dispose() } catch {}
+                    $script:RepoRegState   = @{}
+                    $script:RepoTrustState = @{}
+                    foreach ($r in $script:LiveRepos) {
+                        $script:RepoRegState[$r.Name]   = $true
+                        $script:RepoTrustState[$r.Name] = $r.Policy
                     }
-                    $script:LiveRepos      += $obj
-                    $script:RepoRegState[$r.Name]   = $true
-                    $script:RepoTrustState[$r.Name] = $r.InstallationPolicy
+                    $script:RepoTabBusy = $false
+                    BuildRepoUI
+                    return
+                } elseif ($raw -match '^REPO\^') {
+                    $p = $raw.Substring(5).Split('^')
+                    if ($p.Count -ge 3) {
+                        $provVal = if ($p.Count -ge 4) { $p[3].Trim() } else { '' }
+                        $script:LiveRepos += [PSCustomObject]@{
+                            Name=$p[0].Trim(); Url=$p[1].Trim()
+                            Policy=$p[2].Trim(); Provider=$provVal
+                            IsRegistered=$true
+                        }
+                    }
+                } elseif ($raw -eq 'NONE' -or $raw -eq 'NOMOD') {
+                    # handled at DONE
+                } elseif ($raw -match '^ERR') {
+                    $t.Stop()
+                    try { $ps.EndInvoke($ar) | Out-Null; $ps.Dispose(); $rs.Close(); $rs.Dispose() } catch {}
+                    $script:RepoTabBusy = $false
+                    BuildRepoUI
+                    return
                 }
             }
-        } catch {}
-
-        $script:RepoTabBusy = $false
-        BuildRepoUI
+        }.GetNewClosure())
+        $t.Start()
     }
 
     function BuildRepoUI {
@@ -4665,6 +4596,4 @@ try {
 
 Write-Log 'GUI closed.' 'INFO'
 $e = $null
-while ($Global:LogQ.TryDequeue([ref]$e)) {
-    if (-not $Global:IsCompiledEXE) { Write-Host $e }
-}
+while ($Global:LogQ.TryDequeue([ref]$e)) { Write-Host $e }
